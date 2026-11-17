@@ -1,0 +1,35 @@
+{
+  "name": "anibt-qb",
+  "version": "2.26.4",
+  "private": true,
+  "description": "AniBT 我的订阅 → qBittorrent 命令行自动追番工具",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "anibt-qb": "./src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node scripts/build.mjs",
+    "gui": "node src/gui.js",
+    "start": "node src/cli.js",
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:check": "node scripts/sync-version.mjs --check",
+    "verify:release": "node scripts/verify-release.mjs",
+    "format": "prettier --write src/gui-server.js src/gui/*.js src/runner.js ui/app.js ui/settings.js ui/status.js",
+    "format:check": "prettier --check src/gui-server.js src/gui/*.js src/runner.js ui/app.js ui/settings.js ui/status.js"
+  },
+  "dependencies": {
+    "cheerio": "1.2.0",
+    "fast-xml-parser": "5.11.2",
+    "undici": "8.12.3"
+  },
+  "devDependencies": {
+    "acorn": "8.15.0",
+    "esbuild": "0.25.12",
+    "eslint-scope": "8.4.0",
+    "prettier": "3.6.2"
+  }
+}

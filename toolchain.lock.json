@@ -1,0 +1,21 @@
+{
+  "platform": "win32",
+  "arch": "x64",
+  "node": {
+    "version": "24.22.1",
+    "url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-win-x64.zip",
+    "sha256": "d2046d28c2c3dcd211ac5145c0bf30e2047ef9dfb306693c8c6e2eccd8b95fa5",
+    "executableSha256": "d702daa815eabbff763c7d3808e235cf031cf2ca70211b56847bc72f51e240e5"
+  },
+  "webview2": {
+    "version": "1.0.4314.35",
+    "url": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4314.35/microsoft.web.webview2.1.0.4314.35.nupkg",
+    "sha256": "90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4",
+    "files": {
+      "lib/net462/Microsoft.Web.WebView2.Core.dll": "acdd517b951829f763d1255f32df1e6a936cb8623a7ebff6b8b24172dede6bd6",
+      "lib/net462/Microsoft.Web.WebView2.Wpf.dll": "baafa0a595c2cefb3be8f18288c3db76f52e3966c8b99957d5e56caf1b137bc1",
+      "build/native/x64/WebView2Loader.dll": "d3fce90bdeecb08596e377dea6a316354dd8949e32ff09b89d51be00c14e21b6",
+      "LICENSE.txt": "0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+config.json
+data/
+*.log
+.research/
+release/
+*.zip
+
+.tools/
+/dist/
+/native/
+/runtime/
+/使用说明.html
+/VALIDATION.md
+*.zip.sha256

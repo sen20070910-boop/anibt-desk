@@ -1,0 +1,11 @@
+(() => {
+  const panel=document.createElement('section');panel.className='panel hidden';panel.id='retry-queue';panel.style.marginTop='24px';panel.style.padding='22px';
+  const title=document.createElement('h3');title.textContent='逐项重试队列';const hint=document.createElement('p');hint.className='muted';hint.textContent='显示前 40 项。暂停后不会自动请求；重新排队会解除暂停和退避，下次检查仍校验当前偏好、退订和已看状态。';const rows=document.createElement('div');panel.append(title,hint,rows);document.querySelector('#page-downloads .history-heading').before(panel);
+  const classes={'invalid-resource':'资源无效',authentication:'认证失败',confirmation:'添加确认',network:'网络故障','rate-limit':'请求限流','downloader-rejected':'下载器拒绝','source-missing':'来源不存在'};
+  function update(status){const entries=status?.retryQueue||[];panel.classList.toggle('hidden',!entries.length);rows.replaceChildren(...entries.map(entry=>{
+    const row=document.createElement('div');row.className='history-row';row.style.padding='16px 0';row.style.flexWrap='wrap';const info=document.createElement('div'),name=document.createElement('strong'),meta=document.createElement('p'),error=document.createElement('small');
+    info.style.flex='1 1 260px';info.style.overflowWrap='anywhere';name.textContent=entry.title;meta.textContent=`${entry.status} · 尝试 ${entry.attempts} 次${entry.failureClass?' · '+(classes[entry.failureClass]||entry.failureClass):''}${entry.lastAttemptAt?' · 上次 '+date(entry.lastAttemptAt):''}${entry.nextRetryAt?' · 下次 '+date(entry.nextRetryAt):''}`;if(entry.failureStage)meta.textContent+=' · 阶段 '+({'downloader-connect':'连接下载器',confirmation:'确认添加',validation:'资源校验',transfer:'获取或提交资源'}[entry.failureStage]||entry.failureStage);meta.className='muted';error.textContent=entry.lastError;info.append(name,meta,error);row.append(info);
+    for(const [action,label]of [['pause','暂停此项'],['retry','重新排队']]){const button=document.createElement('button');button.type='button';button.className='button secondary';button.textContent=label;button.disabled=!!status.busy||(action==='pause'&&entry.paused);button.addEventListener('click',guarded(async()=>{button.disabled=true;try{await api('pending/action',{action,ids:[entry.queueId]});toast(action==='pause'?'此项已暂停。':'已重新排队，将在下次检查时重试。');}finally{await loadStatus();}}));row.append(button);}return row;
+  }));}
+  window.AniBTQueue={update};update(typeof S==='undefined'?null:S.status);
+})();

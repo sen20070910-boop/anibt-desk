@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="追番台是搭配 AniBT 和 qBittorrent 使用的 Windows 桌面追番工具，支持订阅、规则筛选与自动下载、手动补集、观看记录。">
+  <meta name="theme-color" content="#f6f3fe">
+  <title>追番台 · AniBT Desk</title>
+  <link rel="icon" href="anibt.ico">
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body id="top">
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top"><img src="anibt.ico" alt="" width="34" height="34">追番台 <span>AniBT Desk</span></a>
+      <nav aria-label="页面导航">
+        <a href="#workflow">追番流程</a>
+        <a href="#compare">同类工具</a>
+        <a href="#start">开始使用</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="title">
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Windows 桌面追番工具</p>
+          <h1 id="title">追番台</h1>
+          <p class="hero-lead">从订阅新番到标记看完</p>
+          <p class="hero-description">用 AniBT 看排播、订阅新番，让 qBittorrent 按你的偏好下载。某一集没跟上，可以从进度页查漏、挑版本再补齐。</p>
+          <div class="actions">
+            <a class="button primary" href="../release/AniBT-qB-v2.26.4-Windows-x64.zip" data-repo-path="/releases">下载 Windows 版 <span aria-hidden="true">↓</span></a>
+            <a class="button secondary" href="#start">查看配置步骤 <span aria-hidden="true">↘</span></a>
+          </div>
+          <p class="hero-note">Windows 10/11 x64 · 需要 qBittorrent 和 WebView2 Runtime</p>
+        </div>
+
+        <section class="demo" aria-labelledby="demo-title">
+          <div class="demo-window">
+            <h2 id="demo-title"><img src="anibt.ico" alt="" width="19" height="19">追番台</h2>
+            <span>操作示例</span>
+          </div>
+          <div class="demo-switch" aria-label="切换操作示例">
+            <button type="button" aria-pressed="true" aria-controls="demo-subscribe">订阅新番</button>
+            <button type="button" aria-pressed="false" aria-controls="demo-version">选择版本</button>
+            <button type="button" aria-pressed="false" aria-controls="demo-missing">核对缺集</button>
+          </div>
+
+          <div class="demo-content" id="demo-subscribe">
+            <div class="demo-heading"><h3>季度放送时间线</h3><span>北京时间</span></div>
+            <div class="demo-row">
+              <div class="calendar-cell"><small>周三</small><strong>23:00</strong></div>
+              <div class="row-info"><strong>星河旅人</strong><span>第 7 集 · 要求含简中</span></div>
+              <span class="status success">已订阅</span>
+            </div>
+            <div class="demo-row">
+              <div class="calendar-cell green"><small>周五</small><strong>22:30</strong></div>
+              <div class="row-info"><strong>林间日记</strong><span>开播在即 · 可提前订阅</span></div>
+              <span class="status">待放送</span>
+            </div>
+            <p>登录 AniBT 后可在番剧卡片上确认订阅，选好发布组和追番起点。</p>
+          </div>
+
+          <div class="demo-content" id="demo-version" hidden>
+            <div class="demo-heading"><h3>第 7 集下载规则</h3><span>星河旅人</span></div>
+            <div class="demo-row">
+              <div class="calendar-cell"><small>首选</small><strong>A 组</strong></div>
+              <div class="row-info"><strong>简中 · 1080p</strong><span>首选组有符合规则的发布时优先</span></div>
+              <span class="status">等待发布</span>
+            </div>
+            <div class="demo-row">
+              <div class="calendar-cell green"><small>补位</small><strong>B 组</strong></div>
+              <div class="row-info"><strong>简中 · 1080p</strong><span>在允许组内 · 已找到资源</span></div>
+              <span class="status success">等待补位</span>
+            </div>
+            <p>等待结束后，若首选组仍无合格资源，其他符合规则的发布可以补位。</p>
+          </div>
+
+          <div class="demo-content" id="demo-missing" hidden>
+            <div class="demo-heading"><h3>离线漏集核对</h3><span>林间日记</span></div>
+            <div class="demo-row">
+              <div class="calendar-cell"><small>集数</small><strong>05</strong></div>
+              <div class="row-info"><strong>第 5 集</strong><span>已有下载记录</span></div>
+              <span class="status success">已完成</span>
+            </div>
+            <div class="demo-row">
+              <div class="calendar-cell green"><small>集数</small><strong>06</strong></div>
+              <div class="row-info"><strong>第 6 集</strong><span>按番名和集号搜索，核对分季</span></div>
+              <span class="status">待确认</span>
+            </div>
+            <p>缺集可以先看 AniBT 当前可查到的资源，也可以跨站搜索后手动补下载。</p>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="wrap content-section workflow" id="workflow" aria-labelledby="workflow-title">
+      <div class="section-intro">
+        <h2 id="workflow-title">一部番怎么追下来</h2>
+        <p>以一部已经播到第 5 集的新番为例。</p>
+      </div>
+      <ol class="workflow-steps">
+        <li><h3>从放送表订阅</h3><p>按季度和星期浏览，找到要追的番。在卡片上登录并确认订阅 AniBT，然后给这部番设定从第 5 集开始追。</p></li>
+        <li><h3>先等喜欢的版本</h3><p>限定画质和字幕形式，把 A 组设为首选，B 组列为可补位。规则预览会显示哪些条目符合、哪些在等待。</p></li>
+        <li><h3>有更新就交给 qBittorrent</h3><p>后台定时读取 AniBT 私人 RSS。默认同番同集同修订版只提交一份。启用按需启动后，本机 qBittorrent 在有任务时可自动打开。</p></li>
+        <li><h3>查漏、看完、收档</h3><p>打开追番进度核对遗漏的集数，选定资源再补下载。看完可打分、写评价，重看时保留以前的观看记录和评价。</p></li>
+      </ol>
+    </section>
+
+    <section class="compare-section" id="compare" aria-labelledby="compare-title">
+      <div class="wrap content-section compare-layout">
+        <div class="section-intro">
+          <h2 id="compare-title">同类工具各有侧重</h2>
+          <p>追番台把 AniBT 订阅、Windows 上的 qBittorrent 下载和逐集观看进度连在一起。下面是几种常见的追番方式。</p>
+        </div>
+        <dl class="compare-list">
+          <div class="featured"><dt>追番台</dt><dd>在 Windows 上看 AniBT 排播、定单番规则、选集补下载，按自己的节奏维护一份本机观看记录。</dd></div>
+          <div><dt>AutoBangumi</dt><dd>聚合 RSS 并自动整理、重命名下载文件，便于 Plex、Jellyfin 等媒体库识别。<a href="https://github.com/EstrellaXD/Auto_Bangumi">项目说明</a></dd></div>
+          <div><dt>ani-rss</dt><dd>围绕 RSS 订阅下载，提供媒体元数据刮削和发行版本更新。<a href="https://github.com/wushuo894/ani-rss">项目说明</a></dd></div>
+          <div><dt>Animeko</dt><dd>在同一个客户端找番、播放、看弹幕、离线缓存，并同步 Bangumi 观看记录。<a href="https://github.com/open-ani/animeko">项目说明</a></dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="wrap content-section start-layout" id="start" aria-labelledby="start-title">
+      <div class="section-intro">
+        <h2 id="start-title">开始使用</h2>
+        <p>准备 AniBT 账号、能连接的 qBittorrent Web UI，以及带 WebView2 Runtime 的 Windows 10/11 x64 电脑。</p>
+        <p class="start-note">自动更新集数来自 AniBT 私人 RSS。动漫花园、Nyaa 和 VCB-S 作品入口可用于核对和手动补集。</p>
+      </div>
+      <div class="start-instructions">
+        <ol>
+          <li>下载 Windows x64 ZIP 并完整解压。</li>
+          <li>开启 qBittorrent 的 Web UI，然后双击「打开图形界面.vbs」。</li>
+          <li>在偏好设置填入自己的 AniBT 私人 RSS 和 qBittorrent 连接信息，测试成功后启动自动追番。</li>
+        </ol>
+        <a class="button primary" href="../release/AniBT-qB-v2.26.4-Windows-x64.zip" data-repo-path="/releases">下载 Windows 版 <span aria-hidden="true">↓</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <a class="brand" href="#top"><img src="anibt.ico" alt="" width="25" height="25">追番台</a>
+      <a href="../README.md" data-repo-path="">项目 README</a>
+      <a href="../使用说明.md" data-repo-path="/blob/main/使用说明.md">完整使用手册</a>
+    </div>
+  </footer>
+</body>
+</html>

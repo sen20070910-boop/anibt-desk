@@ -1,0 +1,40 @@
+{
+  "rssUrl": "https://anibt.net/rss/subscriptions.xml?key=请换成你的个人RSS令牌&limit=200",
+  "intervalSeconds": 300,
+  "firstRun": "baseline",
+  "stateFile": "data/state.json",
+  "qb": {
+    "url": "http://127.0.0.1:8080",
+    "username": "admin",
+    "password": "",
+    "passwordEncrypted": "",
+    "savePath": "",
+    "category": "AniBT",
+    "tags": [
+      "AniBT"
+    ],
+    "paused": false,
+    "autoStart": true,
+    "executable": ""
+  },
+  "filters": {
+    "groups": [],
+    "resolutions": [],
+    "languages": [
+      "CHS"
+    ],
+    "subtitles": [],
+    "include": [],
+    "exclude": [],
+    "priorityGroups": [],
+    "fallbackHours": 6
+  },
+  "dedupeEpisodes": true,
+  "rules": [],
+  "notifications": {
+    "enabled": true,
+    "openOnDownload": true
+  },
+  "startDate": "",
+  "startEpisode": ""
+}

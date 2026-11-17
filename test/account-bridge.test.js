@@ -1,0 +1,2 @@
+import test from'node:test';import assert from'node:assert/strict';import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';
+test('official-site subscription adapter keeps secrets in the site context, verifies writes, and refuses changed interfaces',()=>{const r=spawnSync(process.execPath,['--experimental-vm-modules',fileURLToPath(new URL('./account-bridge-check.cjs',import.meta.url))],{encoding:'utf8',windowsHide:true});assert.equal(r.status,0,r.stdout+r.stderr);});
