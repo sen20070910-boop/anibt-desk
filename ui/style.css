@@ -179,3 +179,14 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 .design-preview-classic b {left:31px;right:8px;top:10px;height:17px;background:#fff;border-radius:4px;}
 .design-preview-classic em {left:31px;right:8px;top:33px;height:21px;background:#d2c8ea;border-radius:4px;}
 
+.discovery-alias-tools {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 12px;
+  color: var(--muted);
+}
+.discovery-alias-tools .inline-check {font-size: 12px;}
+.discovery-alias-tools small {font-size: 12px;overflow-wrap: anywhere;}
+

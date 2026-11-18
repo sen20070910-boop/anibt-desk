@@ -373,11 +373,7 @@ export function makeApplication({
         theme: ["system", "light", "dark"].includes(p.theme)
           ? p.theme
           : "system",
-        design: [
-          "classic",
-          "morph",
-          "apple",
-        ].includes(p.design)
+        design: ["classic", "morph", "apple"].includes(p.design)
           ? p.design
           : "classic",
         networkMode: ["auto", "direct", "custom"].includes(p.networkMode)
@@ -449,7 +445,8 @@ export function makeApplication({
     } catch {
       throw new Error("无法保存删除操作意图，尚未向下载器发送删除请求。");
     }
-    let confirmed = false, active = [];
+    let confirmed = false,
+      active = [];
     try {
       if (targets.length) {
         await qb.request(
@@ -658,19 +655,18 @@ export function makeApplication({
       : backgroundStatus(configFile);
   const script = (action) =>
     deps.executeScript ? deps.executeScript(action) : executeScript(action);
-  const qbInfo = async (force = false) => {
+  const qbSnapshot = async (force = false) => {
     if (qbPromise) return qbPromise;
-    if (!force && qbCache && Date.now() - qbCache.at < 15000)
-      return qbCache.value;
-    qbPromise = readQbInfo(force).finally(() => (qbPromise = null));
+    if (!force && qbCache && Date.now() - qbCache.at < 15000) return qbCache;
+    qbPromise = readQbSnapshot().finally(() => (qbPromise = null));
     return qbPromise;
   };
-  const readQbInfo = async (force = false) => {
-    if (!force && qbCache && Date.now() - qbCache.at < 15000)
-      return qbCache.value;
+  const qbInfo = async (force = false) => (await qbSnapshot(force)).value;
+  const readQbSnapshot = async () => {
     const c = getConfig();
     const qb = deps.qb || new QbClient(c);
     let value;
+    let taskHashes = new Set();
     try {
       const version = await qb.login();
       const [all, prefs] = await Promise.all([
@@ -711,13 +707,18 @@ export function makeApplication({
         savePath: c.qb.savePath || prefs.save_path,
         torrents,
       };
+      taskHashes = new Set(
+        all.flatMap((t) =>
+          typeof t.hash === "string" ? [t.hash.toLowerCase()] : [],
+        ),
+      );
     } catch (e) {
       value = { connected: false, error: e.message, torrents: [] };
     } finally {
       await qb.logout();
     }
-    qbCache = { at: Date.now(), value };
-    return value;
+    qbCache = { at: Date.now(), value, taskHashes };
+    return qbCache;
   };
   const requireIdle = ({ recovery = false } = {}) => {
     if (!recovery) stateStore.assertClean();
@@ -1083,6 +1084,13 @@ export function makeApplication({
     },
     get qbInfo() {
       return qbInfo;
+    },
+    async discoveryTaskPresence(hashes, force) {
+      const snapshot = await qbSnapshot(force);
+      return {
+        connected: snapshot.value.connected,
+        hashes: hashes.filter((hash) => snapshot.taskHashes.has(hash)),
+      };
     },
     get readJsonFile() {
       return readJsonFile;

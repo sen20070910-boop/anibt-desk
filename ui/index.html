@@ -32,8 +32,28 @@
       </section>
 
       <section id="page-discover" class="page hidden" aria-label="发现资源">
-        <div class="page-intro"><div><h2>好作品，一处找到。</h2><p>统一搜索 AniBT、动漫花园、Nyaa 与 VCB-S 作品，在这里选择版本并加入下载。</p></div><div class="discovery-header-actions"><a class="button secondary subtitle-resource-link" id="discovery-subtitle-site" href="https://bbs.acgrip.com/forum-37-1.html" target="_blank" rel="noopener noreferrer" title="使用默认浏览器打开 ACG.RIP 字幕分享板块"><span data-icon="external"></span>字幕资源<span class="source-label">ACG.RIP</span></a><button class="button secondary" id="browse-vcb"><span data-icon="library"></span>浏览 VCB-S 作品</button></div></div>
-        <div class="panel discovery-search-panel"><form id="discovery-search-form" class="discovery-search-form"><div class="discovery-query"><span data-icon="search"></span><input id="discovery-query" placeholder="搜索作品名、英文名或压制组，例如 葬送的芙莉莲 / VCB-Studio" aria-label="跨站搜索关键词" autocomplete="off"></div><button type="submit" class="button primary" id="discovery-submit"><span data-icon="search"></span>搜索资源</button></form><div class="source-selector"><span>搜索来源</span><button type="button" class="source-chip selected" data-source="anibt" aria-pressed="true">AniBT</button><button type="button" class="source-chip selected" data-source="dmhy" aria-pressed="true">动漫花园</button><button type="button" class="source-chip selected" data-source="nyaa" aria-pressed="true">Nyaa</button><button type="button" class="source-chip selected" data-source="vcb" aria-pressed="true">VCB-S 作品</button><button type="button" class="text-button" id="discovery-select-all">全部来源</button><button type="button" class="text-button network-shortcut" data-go="settings">联网设置 ↗</button></div></div>
+        <div class="page-intro"><div><h2>好作品，一处找到。</h2><p>跨站搜索番剧资源，选好版本后加入 qBittorrent。</p></div><div class="discovery-header-actions"><a class="button secondary subtitle-resource-link" id="discovery-subtitle-site" href="https://bbs.acgrip.com/forum-37-1.html" target="_blank" rel="noopener noreferrer" title="使用默认浏览器打开 ACG.RIP 字幕分享板块"><span data-icon="external"></span>字幕资源<span class="source-label">ACG.RIP</span></a><button class="button secondary" id="browse-vcb"><span data-icon="library"></span>浏览 VCB-S 作品</button></div></div>
+        <div class="panel discovery-search-panel">
+          <form id="discovery-search-form" class="discovery-search-form">
+            <div class="discovery-query"><span data-icon="search"></span><input id="discovery-query" placeholder="搜索作品名、英文名或压制组，例如 葬送的芙莉莲 / VCB-Studio" aria-label="跨站搜索关键词" autocomplete="off"></div>
+            <button type="submit" class="button primary" id="discovery-submit"><span data-icon="search"></span>搜索资源</button>
+          </form>
+          <div class="source-selector">
+            <span>搜索来源</span>
+            <button type="button" class="source-chip selected" data-source="anibt" aria-pressed="true">AniBT</button>
+            <button type="button" class="source-chip selected" data-source="garden" aria-pressed="true">Anime Garden</button>
+            <button type="button" class="source-chip selected" data-source="mikan" aria-pressed="true">蜜柑计划</button>
+            <button type="button" class="source-chip selected" data-source="dmhy" aria-pressed="true">动漫花园</button>
+            <button type="button" class="source-chip selected" data-source="nyaa" aria-pressed="true">Nyaa</button>
+            <button type="button" class="source-chip selected" data-source="vcb" aria-pressed="true">VCB-S 作品</button>
+            <button type="button" class="text-button" id="discovery-select-all">全部来源</button>
+            <button type="button" class="text-button network-shortcut" data-go="settings">联网设置 ↗</button>
+          </div>
+          <div class="discovery-alias-tools">
+            <label class="inline-check"><input type="checkbox" id="discovery-fuzzy" checked>模糊搜索（同时查番剧别名）</label>
+            <small id="discovery-aliases" aria-live="polite"></small>
+          </div>
+        </div>
         <div id="discovery-providers" class="provider-statuses"></div><div id="discovery-notice" class="notice warning hidden"></div>
         <div class="discovery-toolbar"><div class="view-switch" role="group" aria-label="结果展示方式"><button class="selected" data-discovery-view="releases" aria-pressed="true">发行资源</button><button data-discovery-view="projects" aria-pressed="false">按作品聚合</button></div><div class="discovery-filters"><select id="discovery-language" aria-label="字幕筛选"><option value="prefer">简中优先</option><option value="chs">仅明确含简中</option><option value="all">不限语言</option></select><select id="discovery-resolution" aria-label="画质筛选"><option value="">不限画质</option><option value="1080p">1080p</option><option value="2160p">2160p / 4K</option><option value="720p">720p</option></select><select id="discovery-sort" aria-label="结果排序"><option value="newest">最新发布</option><option value="seeders">做种最多</option><option value="size">体积最大</option><option value="title">作品名称</option></select></div></div>
         <div class="section-heading compact"><h2 id="discovery-result-title">资源发现</h2><span class="hint" id="discovery-result-count">选择来源，搜索喜欢的作品</span></div><div id="discovery-results" class="discovery-results"></div><div class="load-more-wrap"><button class="button secondary hidden" id="discovery-more">显示更多结果</button></div><p class="discovery-footnote">相同种子跨站自动合并。字幕标记来自发布信息；未明确标注简中的版本，添加前需要核对。搜索不会改变自动追番规则。</p>

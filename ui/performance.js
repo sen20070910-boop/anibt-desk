@@ -8,7 +8,7 @@
 
   const active = () => !document.hidden && !nativeHidden;
   let previouslyActive = active();
-  const readOnlyPosts = new Set(['anibt/covers', 'anibt/image']);
+  const readOnlyPosts = new Set(['anibt/covers', 'anibt/image', 'discover/tasks']);
   async function request(endpoint, body, token) {
     const isRead = body === undefined;
     const forced = /[?&]refresh=1(?:&|$)/.test(endpoint);

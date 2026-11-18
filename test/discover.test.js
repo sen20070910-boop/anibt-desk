@@ -20,8 +20,78 @@ test('Nyaa RSS and DMHY search parse hash, subtitle, size, seeders and source li
 test('subtitle inference does not claim simplified Chinese for unknown VCB subtitles',()=>{assert.deepEqual(inferRelease('[VCB-Studio] Demo 1080p HEVC').languages,[]);assert.deepEqual(inferRelease('[ANi] Demo [CHT]').languages,['CHT']);assert.ok(inferRelease('[Test] Demo [CHS]').languages.includes('CHS'));});
 test('VCB project parser reads title, project URL and magnet without executing page content',()=>{const projects=parseVcbProjects(`<article><h2 class="entry-title"><a href="/archives/12">测试作品 HEVC BDRip [Fin]</a></h2><div class="entry-content"><script>ignored()</script><a href="magnet:?xt=urn:btih:${hash}">下载</a></div></article>`);assert.equal(projects.length,1);assert.equal(projects[0].pageUrl,'https://vcb-s.com/archives/12');assert.equal(projects[0].infoHash,hash);});
 test('cross-source merge combines origins while keeping only one torrent and highest seed count',()=>{const merged=mergeReleases([...parseDmhy(dmhy),...parseNyaa(rss)]);assert.equal(merged.length,1);assert.deepEqual(merged[0].sources,['dmhy','nyaa']);assert.equal(merged[0].links.length,2);assert.equal(merged[0].seeders,8);});
-test('unified search tolerates VCB browser validation and clearly labels associated releases',async()=>{const network=mockNetwork();const service=createDiscovery(()=>({}),{network});const result=await service.search({query:'VCB-Studio'});assert.equal(result.items.length,1);assert.deepEqual(new Set(result.items[0].sources),new Set(['anibt','dmhy','nyaa','vcb']));assert.equal(result.providers.find(p=>p.source==='vcb').state,'fallback');assert.ok(result.providers.find(p=>p.source==='vcb').message.includes('浏览器验证'));assert.equal(result.items[0].links.length,3);const calls=network.calls.length;await service.search({query:'VCB-Studio'});assert.equal(network.calls.length,calls);const resolved=await service.resolve(result.items[0].resultId);assert.equal(resolved.infoHash,hash);assert.equal(torrentInfoHash(resolved.torrentData),hash);});
+test('unified search tolerates VCB browser validation and clearly labels associated releases',async()=>{const network=mockNetwork();const service=createDiscovery(()=>({}),{network});const search={query:'VCB-Studio',sources:['anibt','dmhy','nyaa','vcb'],fuzzy:false};const result=await service.search(search);assert.equal(result.items.length,1);assert.deepEqual(new Set(result.items[0].sources),new Set(['anibt','dmhy','nyaa','vcb']));assert.equal(result.providers.find(p=>p.source==='vcb').state,'fallback');assert.ok(result.providers.find(p=>p.source==='vcb').message.includes('浏览器验证'));assert.equal(result.items[0].links.length,3);const calls=network.calls.length;await service.search(search);assert.equal(network.calls.length,calls);const resolved=await service.resolve(result.items[0].resultId);assert.equal(resolved.infoHash,hash);assert.equal(torrentInfoHash(resolved.torrentData),hash);});
 test('original VCB project pages can resolve a directly linked magnet',async()=>{const service=createDiscovery(()=>({}),{network:mockNetwork({vcbBlocked:false})});const result=await service.search({sources:['vcb']});assert.equal(result.providers[0].state,'ok');assert.equal(result.items[0].kind,'project');assert.equal((await service.resolve(result.items[0].resultId)).infoHash,hash);});
 test('search IDs expire and cannot be replaced with arbitrary client URLs',async()=>{let now=1000;const service=createDiscovery(()=>({}),{network:mockNetwork(),now:()=>now});const r=await service.search({sources:['nyaa']});await assert.rejects(service.resolve('https://evil.test/file.torrent'));now+=1800001;await assert.rejects(service.resolve(r.items[0].resultId),/过期/);await assert.rejects(service.search({sources:['invalid']}));await assert.rejects(service.search({query:'番'.repeat(60)}));});
 test('mismatched torrent content is rejected before qB can receive it',async()=>{const service=createDiscovery(()=>({}),{network:mockNetwork({badTorrent:true})});const r=await service.search({sources:['nyaa']});await assert.rejects(service.resolve(r.items[0].resultId),/不一致/);});
 test('one unreachable source does not suppress working results',async()=>{const network=mockNetwork();const read=network.read;network.read=async(url,options)=>{if(new URL(url).hostname==='nyaa.si')throw new Error('offline');return read(url,options);};const service=createDiscovery(()=>({}),{network});const r=await service.search({sources:['anibt','nyaa']});assert.equal(r.items.length,1);assert.equal(r.providers.find(p=>p.source==='nyaa').state,'error');});
+
+test('alternate Chinese titles can find and merge the same release across Garden and Mikan', async () => {
+  const query = '药屋少女的呢喃';
+  const translated = '藥師少女的獨語';
+  const release = '[测试组] ' + translated + ' - 01 [1080p][简中]';
+  const magnet = 'magnet:?xt=urn:btih:' + hash;
+  const calls = [];
+  const network = {
+    cacheKey: () => 'test',
+    close: async () => {},
+    async read(address, options) {
+      const url = new URL(address);
+      calls.push(url);
+      if (options?.binary) {
+        assert.equal(url.hostname, 'mikanime.tv');
+        return { bytes: torrent };
+      }
+      if (url.hostname === 'api.animes.garden') {
+        return { via: 'test', text: JSON.stringify({ status: 'OK', resources: url.searchParams.get('search') === translated
+          ? [{ title: release, magnet, tracker: '&tr=udp%3A%2F%2Ftracker.example%3A80', size: 1073741824, provider: 'dmhy', providerId: '100', href: 'https://share.dmhy.org/topics/view/100.html' }] : [] }) };
+      }
+      assert.equal(url.hostname, 'mikanime.tv');
+      const text = url.searchParams.get('searchstr') === translated
+        ? '<table class="tbl-border"><tbody><tr><td><input data-magnet="' + magnet + '"></td>'
+          + '<td><a href="/Home/Episode/' + hash + '">' + release + '</a></td><td>1 GiB</td>'
+          + '<td>2026/11/18 13:30</td><td><a href="/Download/20261118/' + hash + '.torrent">种子</a></td></tr></tbody></table>'
+        : '<html><body>找不到对应结果</body></html>';
+      return { text, via: 'test' };
+    },
+  };
+  const discovery = createDiscovery(() => ({}), { network });
+  const opts = { query, sources: ['garden', 'mikan'] };
+  const exact = await discovery.search({ ...opts, fuzzy: false });
+  assert.equal(exact.items.length, 0);
+  assert.equal(calls.length, 2);
+  const result = await discovery.search(opts);
+  assert.ok(result.aliases.includes(translated));
+  assert.equal(result.items.length, 1);
+  const [item] = result.items;
+  assert.deepEqual(item.sources, ['garden', 'mikan']);
+  assert.deepEqual(item.languages, ['CHS']);
+  assert.equal(item.infoHash, hash);
+  assert.deepEqual(item.links.map(link => new URL(link.url).hostname), ['animes.garden', 'share.dmhy.org', 'mikanime.tv']);
+  const resolved = await discovery.resolve(item.resultId);
+  assert.equal(torrentInfoHash(resolved.torrentData), hash);
+  assert.equal(new URL(resolved.magnet).searchParams.get('tr'), 'udp://tracker.example:80');
+});
+
+test('catalog aliases expand a specific season and leave unrelated titles out', async () => {
+  const calls = [];
+  const network = {
+    cacheKey: () => 'test',
+    close: async () => {},
+    async read(address) {
+      const url = new URL(address);
+      calls.push(url);
+      if (url.hostname === 'anibt.net') {
+        return { text: JSON.stringify({ page: [
+          { title: { chinese: '新番', native: '新番の物語' } },
+          { title: { chinese: '新番 第二季', chineseTraditional: '新番 第二季', native: '新番の物語 第2期', english: 'New Anime S2' } },
+        ] }) };
+      }
+      return { text: JSON.stringify({ status: 'OK', resources: [] }), via: 'test' };
+    },
+  };
+  const result = await createDiscovery(() => ({}), { network }).search({ query: '新番 第二季', sources: ['garden'] });
+  assert.deepEqual(result.aliases, ['新番の物語 第2期', 'New Anime S2']);
+  assert.deepEqual(calls.filter(url => url.hostname === 'api.animes.garden').map(url => url.searchParams.get('search')),
+    ['新番 第二季', '新番の物語 第2期', 'New Anime S2']);
+});

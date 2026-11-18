@@ -431,6 +431,7 @@ export function createDownloadRoutes(ctx) {
           query: u.searchParams.get("q") || "",
           ...(sources ? { sources: sources.split(",") } : {}),
           refresh: u.searchParams.get("refresh") === "1",
+          fuzzy: u.searchParams.get("fuzzy") !== "0",
         }),
       );
       return;
@@ -460,6 +461,25 @@ export function createDownloadRoutes(ctx) {
         animeTitle: item.animeTitle,
         waitingForQb,
       });
+      return;
+    }
+    if (route === "POST /api/discover/tasks") {
+      if (
+        !Array.isArray(body.hashes) ||
+        body.hashes.length > 240 ||
+        body.hashes.some(
+          (hash) => typeof hash !== "string" || !/^[a-f0-9]{40}$/i.test(hash),
+        )
+      )
+        throw new Error("任务标识无效。");
+      const hashes = [
+        ...new Set(body.hashes.map((hash) => hash.toLowerCase())),
+      ];
+      ctx.json(
+        res,
+        200,
+        await ctx.discoveryTaskPresence(hashes, body.refresh === true),
+      );
       return;
     }
     if (route === "POST /api/discover/add") {

@@ -1,6 +1,10 @@
 import fs from 'node:fs';import path from 'node:path';import{spawn}from'node:child_process';
 export function localDownloader(config){return ['localhost','127.0.0.1','[::1]'].includes(new URL(config.qb.url).hostname);}
-export function sourceLinks(row){const result=[];for(const link of [row.releaseUrl,...(row.sourceLinks||[]).map(i=>i.url)])try{const u=new URL(link);if(['anibt.net','nyaa.si','dmhy.org','www.dmhy.org','share.dmhy.org','vcb-s.com','www.vcb-s.com'].includes(u.hostname)&&u.protocol==='https:'&&!u.username&&!u.password&&!/[?&](key|token)=/i.test(u.search))result.push({name:u.hostname,url:u.href});}catch{}if(!result.length&&!row.kind&&/^[a-zA-Z0-9_-]+$/.test(row.id||''))result.push({name:'AniBT 发布页',url:'https://anibt.net/release/'+encodeURIComponent(row.id)});return result;}
+const releasePageHosts = new Set([
+  'anibt.net', 'nyaa.si', 'dmhy.org', 'www.dmhy.org', 'share.dmhy.org',
+  'vcb-s.com', 'www.vcb-s.com', 'animes.garden', 'www.animes.garden', 'mikanime.tv', 'mikanani.me',
+]);
+export function sourceLinks(row){const result=[];for(const link of [row.releaseUrl,...(row.sourceLinks||[]).map(i=>i.url)])try{const u=new URL(link);if(releasePageHosts.has(u.hostname)&&u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&!/[?&](key|token)=/i.test(u.search))result.push({name:u.hostname,url:u.href});}catch{}if(!result.length&&!row.kind&&/^[a-zA-Z0-9_-]+$/.test(row.id||''))result.push({name:'AniBT 发布页',url:'https://anibt.net/release/'+encodeURIComponent(row.id)});return result;}
 export async function inspectHistory(row,config,qb){
  const info={title:row.title,hash:row.hash||'',recordedAt:row.at,savePath:row.savePath||'',links:sourceLinks(row),connected:false,taskPresent:false,fileStatus:'unknown',fileMessage:'尚未核实文件。',canOpenFolder:false};
  const local=localDownloader(config);let torrent,files;

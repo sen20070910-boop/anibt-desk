@@ -200,6 +200,42 @@ test('removed themes fall back to classic without losing brightness or network s
 test('manual search add is confirmed in qB, recorded once and does not modify automatic filters',async t=>{let adds=0;const hashes=new Set();const manualQb={login:async()=>{},ensureCategory:async()=>{},has:async h=>hashes.has(h),add:async i=>{adds++;hashes.add(i.infoHash);},logout:async()=>{}};const discovery={search:async()=>({items:[]}),resolve:async id=>{if(id!=='valid')throw new Error('expired');return{...item,sources:['nyaa']};}};const f=await fixture(t,{discovery,manualQb});const before=fs.readFileSync(f.configFile,'utf8');let r=await f.request('discover/add',{resultId:'valid',paused:true});assert.equal(r.status,200);assert.equal(r.data.existing,false);assert.equal(adds,1);r=await f.request('discover/add',{resultId:'valid'});assert.equal(r.data.existing,true);assert.equal(adds,1);const history=(await f.request('status')).data.state.history;assert.equal(history.length,1);assert.equal(history[0].kind,'manual');assert.equal(fs.readFileSync(f.configFile,'utf8'),before);assert.equal((await f.request('discover/add',{resultId:'https://evil.test/a'})).status,400);});
 test('unknown simplified subtitle metadata needs an explicit per-download acknowledgement',async t=>{let adds=0;const manualQb={login:async()=>{},ensureCategory:async()=>{},has:async()=>false,add:async()=>{adds++;},logout:async()=>{}};const discovery={resolve:async()=>({...item,languages:[],sources:['vcb']})};const f=await fixture(t,{discovery,manualQb});assert.equal((await f.request('discover/add',{resultId:'test'})).status,400);assert.equal(adds,0);assert.equal((await f.request('discover/add',{resultId:'test',acknowledgeSubtitle:true})).status,200);assert.equal(adds,1);});
 
+test('discovery reflects live qB tasks and permits the same seed after deletion with history intact', async t => {
+  const foreign = 'b'.repeat(40);
+  const hashes = new Set([foreign]);
+  let connected = true;
+  let adds = 0;
+  let launches = 0;
+  const qb = {
+    login: async () => { if (!connected) throw Error('offline'); return '5'; },
+    request: async () => ({ json: async () => ({}) }),
+    list: async () => [...hashes].map(hash => ({ hash, category: 'foreign' })),
+    logout: async () => {},
+  };
+  const manualQb = {
+    ...qb,
+    connectForDownload: async () => { launches++; },
+    ensureCategory: async () => {},
+    has: async hash => hashes.has(hash),
+    add: async entry => { adds++; hashes.add(entry.infoHash); },
+  };
+  const f = await fixture(t, { qb, manualQb, discovery: { resolve: async () => item } });
+  const presence = () => f.request('discover/tasks', { hashes: [item.infoHash.toUpperCase(), foreign], refresh: true });
+  assert.deepEqual((await presence()).data, { connected: true, hashes: [foreign] });
+  assert.equal((await f.request('qb')).data.torrents.length, 0, 'regular status remains limited to managed tasks');
+  assert.equal((await f.request('discover/add', { resultId: 'episode' })).data.existing, false);
+  assert.deepEqual((await presence()).data.hashes, [item.infoHash, foreign]);
+  hashes.delete(item.infoHash);
+  assert.deepEqual((await presence()).data.hashes, [foreign]);
+  assert.equal((await f.request('status')).data.state.history[0].hash, item.infoHash);
+  assert.equal((await f.request('discover/add', { resultId: 'episode' })).data.existing, false);
+  assert.equal(adds, 2);
+  connected = false;
+  assert.deepEqual((await presence()).data, { connected: false, hashes: [] });
+  assert.equal(launches, 2, 'read-only presence checks never start qB');
+  assert.equal((await f.request('discover/tasks', { hashes: ['bad'] })).status, 400);
+});
+
 test('discovery additions use per-work subfolders for blank paths, exact overrides and original paths on duplicates',async t=>{
  const c=clone(defaults),qb=new QbClient(c),forms=[],hashes=new Set();qb.connectForDownload=async()=>{};qb.ensureCategory=async()=>{};qb.logout=async()=>{};let adding=false;
  qb.has=async h=>adding||hashes.has(h);qb.request=async(method,body)=>{if(method==='app/preferences')return{json:async()=>({save_path:'D:/Downloads'})};if(method==='torrents/add'){forms.push(body);adding=true;return{text:async()=> 'Ok.'};}throw new Error(method);};
