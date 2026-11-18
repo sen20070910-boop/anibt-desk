@@ -92,7 +92,7 @@ function renderStatus() {
       );
 }
 
-function renderQb() {
+function renderQb(previousTorrents) {
   if (!S.qb) return;
   const q = S.qb;
   text(
@@ -135,18 +135,29 @@ function renderQb() {
       error: "任务出错",
       missingFiles: "文件缺失",
     })[s] || s;
-  $("download-cards").innerHTML = q.torrents.length
+  const cards = $("download-cards");
+  cards.innerHTML = q.torrents.length
     ? q.torrents
-        .map(
-          (t) =>
-            `<div class="download-card" data-qb-hash="${escape(t.hash)}"><div class="download-top"><span class="download-name" title="${escape(t.name)}">${escape(t.name)}</span><span class="badge ${t.progress >= 1 ? "success" : ""}">${escape(stateLabel(t.state))}</span></div><div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, Math.max(0, t.progress * 100)).toFixed(1)}%"></div></div><div class="download-meta"><span>${(t.progress * 100).toFixed(1)}% · ${bytes(t.size)}</span><span>${t.downloadSpeed ? bytes(t.downloadSpeed) + "/s" : "暂无下载速度"}</span></div><p class="download-location" title="${escape(t.savePath)}">下载目录：${escape(t.savePath || "由 qBittorrent 决定")}</p><div class="download-shortcuts"><button type="button" class="button secondary" data-qb-folder="${escape(t.hash)}">打开保存目录</button><button type="button" class="button secondary" data-qb-details="${escape(t.hash)}">快捷操作 / 文件状态</button></div></div>`,
-        )
+        .map((t) => {
+          const progress = Math.min(1, Math.max(0, Number(t.progress) || 0));
+          const percent = (progress * 100).toFixed(1);
+          const hash = escape(t.hash);
+          const name = escape(t.name);
+          return `<div class="download-card" data-qb-hash="${hash}">
+            <div class="download-top"><span class="download-name" title="${name}">${name}</span><span class="badge ${t.progress >= 1 ? "success" : ""}">${escape(stateLabel(t.state))}</span></div>
+            <div class="progress-track" role="progressbar" aria-label="${name}下载进度" aria-valuenow="${percent}"><div class="progress-fill" style="--download-progress:${progress}"></div></div>
+            <div class="download-meta"><span>${percent}% · ${bytes(t.size)}</span><span>${t.downloadSpeed ? bytes(t.downloadSpeed) + "/s" : "暂无下载速度"}</span></div>
+            <p class="download-location" title="${escape(t.savePath)}">下载目录：${escape(t.savePath || "由 qBittorrent 决定")}</p>
+            <div class="download-shortcuts"><button type="button" class="button secondary" data-qb-folder="${hash}">打开保存目录</button><button type="button" class="button secondary" data-qb-details="${hash}">快捷操作 / 文件状态</button></div>
+          </div>`;
+        })
         .join("")
     : empty(
         "下一集，准备就绪",
         "符合偏好的新资源添加到 qBittorrent 后，会在这里显示进度。已有的其他下载任务不会混入。",
         "download",
       );
+  window.AniBTMotion?.downloadProgress(cards, previousTorrents);
 }
 
 async function loadStatus() {
@@ -184,8 +195,9 @@ async function loadQb(force = false) {
   }
   qbLoadForced = force;
   qbLoadPromise = (async () => {
+    const previousTorrents = S.qb?.torrents ?? [];
     S.qb = await api("qb" + (force ? "?refresh=1" : ""));
-    renderQb();
+    renderQb(previousTorrents);
   })().finally(() => (qbLoadPromise = null));
   return qbLoadPromise;
 }

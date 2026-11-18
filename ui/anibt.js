@@ -52,9 +52,12 @@
     text('anibt-catalog-count',A.mode==='mine'?'网站已订阅 · 包含暂无资源的番剧':'在 AniBT 搜索番剧，订阅后自动进入追番流程');
     $('anibt-next').classList.toggle('hidden',A.loading||A.mode==='season'||(A.mode==='search'?!A.cursor:A.page>=A.totalPages));$('anibt-previous').classList.toggle('hidden',A.mode!=='mine'||A.page<=1||A.loading);
     text('anibt-pagination-hint',A.mode==='mine'?`第 ${A.page} / ${Math.max(1,A.totalPages)} 页`:'');
-    if(A.loading){$('anibt-catalog-results').innerHTML='<div class="discovery-loading"><div class="spinner"></div><strong>正在读取 AniBT 番剧…</strong></div>';return;}
+    const results=$('anibt-catalog-results');
+    if(A.loading){results.innerHTML=loadingResults('正在读取 AniBT 番剧…');return;}
+    const wasLoading=results.firstElementChild?.classList.contains('discovery-loading');
     if(A.error){$('anibt-catalog-results').innerHTML=empty('暂时无法读取番剧',A.error+' 可点击刷新重试。','search');return;}
-    $('anibt-catalog-results').innerHTML=A.mode==='season'?renderSeason():A.items.length?ordered(A.items).map(item=>card(item,A.items.indexOf(item))).join(''):empty(A.mode==='mine'?'还没有网站订阅':A.loaded?'没有找到匹配的番剧':'搜索想追的下一部番',A.mode==='mine'?'可以切回季度时间线，选择喜欢的番剧进行订阅。':'支持中文、日文、英文番名和 Bangumi 编号。订阅前先连接 AniBT 账号。','search');
+    results.innerHTML=A.mode==='season'?renderSeason():A.items.length?ordered(A.items).map(item=>card(item,A.items.indexOf(item))).join(''):empty(A.mode==='mine'?'还没有网站订阅':A.loaded?'没有找到匹配的番剧':'搜索想追的下一部番',A.mode==='mine'?'可以切回季度时间线，选择喜欢的番剧进行订阅。':'支持中文、日文、英文番名和 Bangumi 编号。订阅前先连接 AniBT 账号。','search');
+    if(wasLoading)window.AniBTMotion?.results(results,'.timeline-card, .anime-card');
     void hydrateCovers();
   }
   async function loadSeason(season=A.seasonKey,refresh=false){

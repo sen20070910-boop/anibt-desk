@@ -90,6 +90,9 @@ try {
     "settings.js",
     "status.js",
     "library-tools.js",
+    "motion.js",
+    "motion.css",
+    "overview-twilight.webp",
   ])
     assert.equal((await fetch(base + "/" + asset)).status, 200);
   const html = await (await fetch(base + "/")).text();

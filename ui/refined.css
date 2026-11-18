@@ -208,7 +208,6 @@ html[data-theme] .resource-card h3 { color: var(--ink); }
 .empty-state p { max-width: 570px; margin-left: auto; margin-right: auto; font-size: 12px; line-height: 1.8; }
 html[data-theme] .empty-icon { background: var(--accent-soft); color: var(--accent-ink); }
 footer { border-top: 1px solid var(--line); margin-top: 30px; padding-top: 15px; opacity: .7; }
-.page { animation: refined-page .22s var(--motion-ease) both; }
 dialog[open] { animation: refined-dialog .18s var(--motion-ease) both; }
 @supports (transition-behavior: allow-discrete) {
   dialog {
@@ -225,7 +224,6 @@ dialog[open] { animation: refined-dialog .18s var(--motion-ease) both; }
   dialog[open]::backdrop { opacity: 1; }
   @starting-style { dialog[open]::backdrop { opacity: 0; } }
 }
-@keyframes refined-page { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes refined-dialog { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .cover-pending { opacity: 0; }
 img[data-cover-url] { transition: opacity .2s ease; }

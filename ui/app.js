@@ -148,6 +148,9 @@ function bytes(n) {
 function empty(title, description, type = "library") {
   return `<div class="empty-state"><span class="empty-icon">${icon(type)}</span><strong>${escape(title)}</strong><p>${escape(description)}</p></div>`;
 }
+function loadingResults(message, description = "") {
+  return `<div class="discovery-loading" role="status"><div class="loading-message"><span class="spinner" aria-hidden="true"></span><strong>${escape(message)}</strong></div><div class="loading-skeleton" aria-hidden="true"><i></i><i></i></div>${description ? `<p>${escape(description)}</p>` : ""}</div>`;
+}
 function changePage(page) {
   if (page === "subtitles") page = "discover";
   S.page = page;

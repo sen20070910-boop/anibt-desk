@@ -23,20 +23,23 @@ html[data-design="morph"] .brand {letter-spacing:-.8px;font-weight:750;}
 html[data-design="morph"] .brand img {filter:grayscale(.55) hue-rotate(40deg);}
 html[data-design="morph"] .side-label {color:var(--muted);letter-spacing:2px;}
 html[data-design="morph"] .sidebar nav {position:relative;isolation:isolate;}
-.morph-nav-rail {display:none;pointer-events:none;}
-html[data-design="morph"] .morph-nav-rail {
+.nav-highlight {display:none;pointer-events:none;}
+html[data-design="morph"] .nav-highlight {
   display:block;position:absolute;inset:0 0 auto;height:var(--rail-height,44px);
   transform:translateY(var(--rail-y,0px));border-radius:16px;
   background:linear-gradient(110deg,#d5ece7,#e2e9f7);border:1px solid #ffffff90;
   box-shadow:0 4px 12px #47758c08;z-index:0;
+}
+html[data-design="morph"] .nav-highlight[data-ready] {
   transition:transform .52s var(--morph-ease),height .4s var(--morph-ease);
 }
-html[data-design="morph"][data-theme="dark"] .morph-nav-rail {background:linear-gradient(110deg,#294a4d,#2d3d58);border-color:#57747b44;}
+html[data-design="morph"][data-theme="dark"] .nav-highlight {background:linear-gradient(110deg,#294a4d,#2d3d58);border-color:#57747b44;}
+.nav-highlight:not([data-ready]) {visibility:hidden;}
 html[data-design="morph"] .nav-item {z-index:1;border-radius:16px;transition:color .2s,background .2s;}
-html[data-design="morph"] .nav-item.active {background:transparent;color:var(--accent-ink);}
+html[data-design="morph"] .nav-item.active {color:var(--accent-ink);}
+html[data-design="morph"] .nav-highlight[data-ready] ~ .nav-item.active {background:transparent;}
 html[data-design="morph"] .nav-item.active::before {display:none;}
 html[data-design="morph"] .nav-item:hover {background:#7fb5b212;}
-html[data-design="morph"] .nav-item.active:hover {background:transparent;}
 html[data-design="morph"] .nav-item b {border-radius:8px;background:var(--paper);color:var(--accent-ink);}
 html[data-design="morph"] .side-note {border-radius:22px 22px 30px 14px;border-color:var(--line);background:var(--surface-inset);}
 html[data-design="morph"] .side-note::after {color:var(--accent-soft);}
@@ -129,7 +132,6 @@ html[data-design="morph"] dialog[open] {border-radius:24px;}
   html[data-design="morph"] dialog[open] {opacity:1;transform:none;border-radius:24px;}
   @starting-style {html[data-design="morph"] dialog[open] {opacity:0;transform:translateY(10px) scale(.965);border-radius:36px;}}
 }
-html[data-design="morph"] .page {animation:morph-page .33s var(--morph-ease) both;}
 html[data-design="morph"] .progress-show {border-radius:22px;}
 html[data-design="morph"] .design-choice {border-radius:14px;}
 html[data-design="morph"] .design-choice.selected {border-color:var(--purple);box-shadow:0 0 0 1px var(--purple);}
@@ -141,7 +143,6 @@ html[data-design="morph"] .design-choice.selected {border-color:var(--purple);bo
   0%,100% {transform:translateY(0) rotate(-6deg);}
   50% {transform:translateY(-7px) rotate(-3deg);}
 }
-@keyframes morph-page {from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
 html[data-design="morph"] .hero-art[data-morph-visible="false"] * {animation-play-state:paused;}
 @media(max-width:1100px){
   html[data-design="morph"] .hero-art {right:-25px;opacity:.65;}

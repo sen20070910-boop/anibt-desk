@@ -1,24 +1,22 @@
-/* One shared navigation surface. No animation frame loop or pointer tracking. */
+/* Follow the active navigation item in the classic and morph themes. */
 (() => {
+  const root=document.documentElement;
   const navigation=document.querySelector('.sidebar nav');
   const rail=document.createElement('span');
-  rail.className='morph-nav-rail';rail.setAttribute('aria-hidden','true');
-  rail.style.opacity='0';
+  rail.className='nav-highlight';rail.setAttribute('aria-hidden','true');
   navigation.prepend(rail);
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
-  let frame=0, previous='', contour;
-  const enabled=()=>document.documentElement.dataset.design==='morph';
+  let frame=0, previous='', design, contour;
   function position(){
     frame=0;
-    if(!enabled()||!window.AniBTRuntime.active())return;
+    if(!window.AniBTRuntime.active())return;
     const target=navigation.querySelector('.nav-item.active');
     if(!target)return;
-    const item=target.getBoundingClientRect(),parent=navigation.getBoundingClientRect();
-    rail.style.setProperty('--rail-y',`${item.top-parent.top}px`);
-    rail.style.setProperty('--rail-height',`${item.height}px`);
-    rail.style.opacity='1';
+    rail.style.setProperty('--rail-y',`${target.offsetTop}px`);
+    rail.style.setProperty('--rail-height',`${target.offsetHeight}px`);
+    rail.dataset.ready='';
     const page=target.dataset.page;
-    if(previous&&previous!==page&&!reduced.matches){
+    if(design==='morph'&&previous&&previous!==page&&!reduced.matches){
       contour?.cancel();
       contour=rail.animate([
         {borderRadius:'16px'},
@@ -29,9 +27,13 @@
     previous=page;
   }
   function schedule(){
-    if(!enabled()||!window.AniBTRuntime.active()){
+    if(design!==root.dataset.design){
+      design=root.dataset.design;
+      delete rail.dataset.ready;
       contour?.cancel();previous='';
-      rail.style.opacity='0';
+    }
+    if(design==='apple'||!window.AniBTRuntime.active()){
+      contour?.cancel();previous='';
       if(frame)cancelAnimationFrame(frame);frame=0;return;
     }
     if(!frame)frame=requestAnimationFrame(position);

@@ -1187,6 +1187,9 @@ export function makeApplication({
         "/settings.js": "settings.js",
         "/status.js": "status.js",
         "/performance.js": "performance.js",
+        "/motion.js": "motion.js",
+        "/motion.css": "motion.css",
+        "/overview-twilight.webp": "overview-twilight.webp",
         "/refined.css": "refined.css",
         "/morph.css": "morph.css",
         "/apple.css": "apple.css",
@@ -1228,7 +1231,9 @@ export function makeApplication({
               ? "text/javascript"
               : name.endsWith(".svg")
                 ? "image/svg+xml"
-                : "text/css";
+                : name.endsWith(".webp")
+                  ? "image/webp"
+                  : "text/css";
         let content = fs.readFileSync(path.join(uiRoot, name));
         if (name === "index.html")
           content = content
@@ -1239,7 +1244,9 @@ export function makeApplication({
               `<html lang="zh-CN" data-theme-preference="${preferences().theme}" data-design="${preferences().design}">`,
             );
         res.writeHead(200, {
-          "Content-Type": mime + "; charset=utf-8",
+          "Content-Type": mime.startsWith("image/")
+            ? mime
+            : mime + "; charset=utf-8",
           "Cache-Control": "no-store",
         });
         res.end(content);
