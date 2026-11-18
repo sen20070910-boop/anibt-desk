@@ -1,6 +1,7 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { load } from 'cheerio/slim';
 import { randomBytes } from 'node:crypto';
+import { Converter } from 'opencc-js/t2cn';
 import { parseFeed } from './feed.js';
 import { normalizeHash, magnetHash, torrentInfoHash } from './torrent.js';
 import { createSourceNetwork, sourceUrl } from './source-network.js';
@@ -125,10 +126,56 @@ export function mergeReleases(items) {
   return[...map.values()].sort((a,b)=>(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0));
 }
 const titleKey = title => title.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, '');
+let simplify;
+const simplifiedTitle = title => (simplify ??= Converter({ from: 't', to: 'cn' }))(title);
+const catalogKey = title => titleKey(simplifiedTitle(title));
+function seasonSuffix(title) {
+  const normalized = title.normalize('NFKC');
+  const match = normalized.match(/(?:\s*第\s*([一二三四五六七八九十两兩\d]{1,3})\s*[季期]|\s+(?:s(\d{1,2})|season\s+(\d{1,2})|(\d{1,2})(?:st|nd|rd|th)\s+season))$/i);
+  if (!match || !match.index) return null;
+  const digits = '零一二三四五六七八九';
+  const value = (match[1] || match[2] || match[3] || match[4]).replace(/[两兩]/g, '二');
+  let number = Number(value);
+  if (value.includes('十')) {
+    const [tens, units] = value.split('十');
+    number = 10 * (tens ? digits.indexOf(tens) : 1) + (units ? digits.indexOf(units) : 0);
+  } else if (value.length === 1 && digits.includes(value)) number = digits.indexOf(value);
+  return number > 0 ? { title: normalized.slice(0, match.index).trim(), number } : null;
+}
+const yearSuffix = /\s*\((?:19|20)\d{2}\)$/;
+function catalogNames(row) {
+  const { title, titleChinese, titleRomaji } = row;
+  return [title?.chinese, title?.chineseTraditional, titleChinese, title?.native || title?.japanese,
+    title?.romaji || titleRomaji, title?.english].filter(name => typeof name === 'string' && name.trim());
+}
+function matchingCatalogNames(page, query, season) {
+  const requestedKey = catalogKey(query);
+  const key = catalogKey(season?.title || query);
+  const matches = new Map();
+  for (const row of page) {
+    if (!row || typeof row !== 'object') continue;
+    const names = catalogNames(row);
+    if (!names.some(name => catalogKey(name) === requestedKey)) {
+      if (!season) continue;
+      const group = names.map(seasonSuffix).filter(Boolean);
+      if (season.number === 1 ? group.some(s => s.number !== 1) : !group.some(s => s.number === season.number)) continue;
+      if (!names.some(name => catalogKey(seasonSuffix(name)?.title || name.replace(yearSuffix, '')) === key)) continue;
+    }
+    const usable = season?.number > 1 ? names.filter(name => seasonSuffix(name)?.number === season.number || yearSuffix.test(name)) : names;
+    if (usable.length) matches.set(String(row.bgmId ?? row._id ?? names.join('|')), usable);
+  }
+  return matches.size === 1 ? matches.values().next().value : [];
+}
+
+function canBeFirstSeason(item) {
+  const title = item.title.normalize('NFKC').replace(/^[\[【][^\]】]+[\]】]\s*/, '');
+  const laterSeason = /第\s*([一二三四五六七八九十百两\d]+)\s*[季期]|\b(?:s(\d+)(?:e\d+)?|season\s*(\d+)|(\d+)(?:st|nd|rd|th)\s+season)\b/gi;
+  return [...title.matchAll(laterSeason)].every(([, cn, short, prefix, suffix]) => cn === '一' || Number(cn || short || prefix || suffix) === 1);
+}
 // AniBT supplies the first and second names. Keep the common simplified
 // spelling of the Taiwanese title usable even when the catalog is offline.
 const knownTitleGroups = [
-  ['药屋少女的呢喃', '藥師少女的獨語', '药师少女的独语', '薬屋のひとりごと'],
+  ['药屋少女的呢喃', '藥師少女的獨語', '药师少女的独语', '薬屋のひとりごと', 'Kusuriya no Hitorigoto', 'The Apothecary Diaries'],
 ];
 function distinctAliases(query, names) {
   const seen = new Set([titleKey(query)]);
@@ -167,31 +214,30 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       if(!url)throw new Error('不支持的来源。');const r=await network.read(url.href);return{items:parser(r.text),via:r.via,state:'ok'};
     },force);
   }
-  async function titleAliases(query, force) {
-    const key = titleKey(query);
+  async function titleAliases(query, force, season) {
+    const title = season?.title || query;
+    const key = catalogKey(title);
     if (key.length < 2) return [];
-    const known = knownTitleGroups.find(group => group.some(title => titleKey(title) === key));
-    if (known) return distinctAliases(query, known);
-    try {
-      return await memo('title-aliases|' + query, async () => {
-        const url = 'https://anibt.net/api/animes/search?' + new URLSearchParams({ q: query, limit: '12' });
-        const { text } = await network.read(url, { maxBytes: 1_000_000, timeoutMs: 3500 });
-        const { page } = JSON.parse(text);
-        if (!Array.isArray(page)) return [];
-        const matches = page.map(({ title, titleChinese, titleRomaji }) => [
-          title?.chinese, title?.chineseTraditional, titleChinese,
-          title?.native || title?.japanese, title?.romaji || titleRomaji, title?.english,
-        ]).filter(names => names.some(name => typeof name === 'string' && titleKey(name) === key));
-        // Use only one exact title record so a search for one season doesn't
-        // inherit a similarly named sequel from the catalog search results.
-        return distinctAliases(query, matches[0] || []);
-      }, force);
-    } catch {
-      return [];
+    const known = !season || season.number === 1
+      ? knownTitleGroups.find(group => group.some(name => catalogKey(name) === key)) : null;
+    if (known) return distinctAliases(season?.number === 1 ? title : query, known);
+    for (const term of new Set([title, simplifiedTitle(title)])) {
+      try {
+        const page = await memo('title-alias-catalog|' + term, async () => {
+          const url = 'https://anibt.net/api/animes/search?' + new URLSearchParams({ q: term, limit: '16' });
+          const { text } = await network.read(url, { maxBytes: 1_000_000, timeoutMs: 3500 });
+          const { page } = JSON.parse(text);
+          return Array.isArray(page) ? page : [];
+        }, force);
+        const names = matchingCatalogNames(page, query, season);
+        if (names.length) return distinctAliases(season?.number === 1 ? title : query, names);
+      } catch {}
     }
+    const original = season?.number === 1 ? title : query;
+    return distinctAliases(original, [simplifiedTitle(original)]);
   }
   async function searchProvider(source, query, aliases, force) {
-    if (source === 'vcb') return vcb(query, force);
+    if (source === 'vcb') return vcb(query, force, await aliases);
     const original = Promise.allSettled([provider(source, query, force)]);
     const terms = await aliases;
     const variants = Promise.allSettled(terms.map(term => provider(source, term, force)));
@@ -202,22 +248,64 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       items: terms.length ? mergeReleases(available.flatMap(response => response.items)) : available[0].items,
       via: [...new Set(available.map(response => response.via).filter(Boolean))].join(' / '),
       state: 'ok',
+      message: available.length < terms.length + 1 ? '部分关键词查询未完成，已显示成功返回的结果。' : '',
     };
   }
-  async function vcb(query,force) {
-    return memo('vcb|'+query,async()=>{
-      let reason='';try{const url=new URL('https://vcb-s.com/');if(query)url.searchParams.set('s',query);const r=await network.read(url.href);const items=parseVcbProjects(r.text,r.url);if(items.length)return{items,via:r.via,state:'ok'};reason='官网本次没有返回可识别的作品项目。';}catch(e){reason=e.code==='BROWSER_REQUIRED'?'官网需要浏览器验证。':e.message;}
-      const q=/VCB[- ]?Studio/i.test(query)?query:('VCB-Studio '+query).trim();const fallback=await Promise.allSettled([provider('dmhy',q,force),provider('nyaa',q,force)]);const available=fallback.filter(r=>r.status==='fulfilled');
-      if(!available.length)throw new Error(reason+' 公开发布站也暂时不可用。');const items=available.flatMap(r=>r.value.items).filter(i=>/VCB[- ]?Studio/i.test(i.title)).map(i=>({...i,source:'vcb',kind:'project',links:[{source:i.source,url:i.pageUrl}]}));
-      return{items:mergeReleases(items),state:'fallback',via:[...new Set(available.map(r=>r.value.via))].join(' / '),message:reason+' 当前关联动漫花园 / Nyaa 的 VCB-Studio 公开发行资源。'};
-    },force);
+  async function vcb(query, force, aliases) {
+    const terms = [...new Set([query, ...aliases])];
+    return memo('vcb|' + JSON.stringify(terms), async () => {
+      let reason = '官网本次没有返回可识别的作品项目。';
+      for (const term of terms.slice(0, 2)) {
+        try {
+          const url = new URL('https://vcb-s.com/');
+          if (term) url.searchParams.set('s', term);
+          const r = await network.read(url.href);
+          const items = parseVcbProjects(r.text, r.url);
+          if (items.length) return { items, via: r.via, state: 'ok' };
+        } catch (e) {
+          reason = e.code === 'BROWSER_REQUIRED' ? '官网需要浏览器验证。' : e.message;
+          break;
+        }
+      }
+      const group = /VCB[- ]?Studio/i;
+      const q = group.test(query) ? query : ('VCB-Studio ' + query).trim();
+      const requests = [['dmhy', q], ['nyaa', q]];
+      for (const term of terms) requests.push(['garden', term || q], ['mikan', term || q]);
+      const fallback = await Promise.allSettled(requests.map(([source, term]) => provider(source, term, force)));
+      const available = fallback.flatMap((r, index) => r.status === 'fulfilled'
+        ? [{ ...r.value, source: requests[index][0] }] : []);
+      if (!available.length) throw new Error(reason + ' 公开发布站也暂时不可用。');
+      const items = available.flatMap(r => r.items).filter(item => group.test(item.title) || group.test(item.groupName))
+        .map(item => ({
+          ...item, source: 'vcb', kind: 'project',
+          links: item.links?.length ? item.links : [{ source: item.source, url: item.pageUrl }],
+        }));
+      return {
+        items: mergeReleases(items), state: 'fallback',
+        via: [...new Set(available.map(r => r.via).filter(Boolean))].join(' / '),
+        message: reason + ' 已查询 ' + [...new Set(available.map(r => sourceNames[r.source]))].join(' / ') + ' 的 VCB-Studio 公开发行资源。',
+      };
+    }, force);
   }
   async function search({query='',sources=Object.keys(sourceNames),refresh=false,fuzzy=true}={}) {
     query=String(query).trim().replace(/\s+/g,' ');if(Buffer.byteLength(query)>150)throw new Error('搜索词过长，请缩短到 150 字节以内。');if(!Array.isArray(sources)||!sources.length||sources.some(s=>!Object.hasOwn(sourceNames,s)))throw new Error('请选择有效的资源来源。');sources=[...new Set(sources)];
     for(const[id,entry]of results)if(now()-entry.at>1800000)results.delete(id);
     for(const[key,entry]of cache)if(!entry.pending&&now()-entry.at>120000)cache.delete(key);
-    const aliases = fuzzy && query && sources.some(source => source !== 'vcb') ? titleAliases(query, refresh) : Promise.resolve([]);
-    const responses=await Promise.all(sources.map(async source=>{const start=now();try{const r=await searchProvider(source,query,aliases,refresh);return{source,name:sourceNames[source],state:r.state,message:r.message||'',via:r.via,count:r.items.length,elapsedMs:now()-start,items:r.items};}catch(e){return{source,name:sourceNames[source],state:e.code==='BROWSER_REQUIRED'?'browser-required':'error',message:e.message,count:0,elapsedMs:now()-start,items:[]};}}));
+    const season = fuzzy ? seasonSuffix(query) : null;
+    const firstSeason = season?.number === 1 ? season.title : '';
+    const aliases = fuzzy && query
+      ? titleAliases(query, refresh, season).then(names => [...new Set(firstSeason ? [firstSeason, ...names] : names)])
+      : Promise.resolve(firstSeason ? [firstSeason] : []);
+    const responses=await Promise.all(sources.map(async source=>{
+      const start=now();
+      try{
+        const r=await searchProvider(source,source==='vcb'&&firstSeason?firstSeason:query,aliases,refresh);
+        const items=firstSeason?r.items.filter(canBeFirstSeason):r.items;
+        return{source,name:sourceNames[source],state:r.state,message:r.message||'',via:r.via,count:items.length,elapsedMs:now()-start,items};
+      }catch(e){
+        return{source,name:sourceNames[source],state:e.code==='BROWSER_REQUIRED'?'browser-required':'error',message:e.message,count:0,elapsedMs:now()-start,items:[]};
+      }
+    }));
     const merged=mergeReleases(responses.flatMap(r=>r.items));const items=merged.slice(0,240).map(remember);return{items,providers:responses.map(({items,...status})=>status),query,aliases:await aliases,fetchedAt:new Date(now()).toISOString(),total:merged.length,truncated:merged.length>240};
   }
   async function resolve(id) {

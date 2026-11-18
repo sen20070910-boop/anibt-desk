@@ -96,10 +96,43 @@
     try{const result=await native('list',{expectedUserId:A.user.id,page});A.items=result.items;A.page=result.page;A.totalPages=result.totalPages;A.loaded=true;for(const item of result.items)A.members.add(item.id);}
     catch(e){A.error=e.message;throw e;}finally{A.loading=false;render();}
   }
-  function confirm(action,index){
-    const item=A.items[index];if(!A.linked||!item?.bgmId)return;A.pending={action,item};text('anibt-change-title',action==='subscribe'?'订阅这部番剧？':'取消网站订阅？');text('anibt-change-name',item.title);
+  function confirm(action,item){
+    if(!A.linked||A.busy||!item?.bgmId||$('anibt-change-dialog').open)return;
+    A.pending={action,item};text('anibt-change-title',action==='subscribe'?'订阅这部番剧？':'取消网站订阅？');text('anibt-change-name',item.title);
     text('anibt-change-description',action==='subscribe'?'会同步添加到 AniBT 我的订阅。新增成功后，开始追番日期默认设为添加当天（北京时间）；已有手动日期保留。网站端先不限发布组，下载仍按本工具的简中、组、目录和日期偏好执行，现有旧集数留待勾选补下载。':'会同步从 AniBT 我的订阅取消，并停止本工具该番尚未提交的重试；已有 qB 下载任务和文件继续保留。其他设备上的网站订阅也会同步变化。');
     $('anibt-confirm-change').textContent=action==='subscribe'?'确认订阅并同步':'确认取消订阅';$('anibt-change-dialog').showModal();
+  }
+  async function unsubscribeFromManagement(anime) {
+    if (!anime || A.busy || A.loading || $('anibt-change-dialog').open) return;
+    const bgmIds = new Set(anime.items.map(item => String(item.bgmId || '')).filter(Boolean));
+    if (bgmIds.size > 1) throw new Error('这个番名对应多个条目，请到「番剧订阅 → 网站已订阅」选择要取消的番剧。');
+    if (!A.linked) {
+      await connect(true);
+      if (!A.linked) return;
+    }
+    const bgmId = [...bgmIds][0];
+    const target = norm(anime.title).trim();
+    let item;
+    A.loading = true;
+    try {
+      const matches = new Map();
+      for (let page = 1; ; page++) {
+        const result = await native('list', { expectedUserId: A.user.id, page });
+        for (const row of result.items) {
+          const same = bgmId ? row.bgmId === bgmId
+            : [row.title, row.originalTitle].some(title => target && norm(title).trim() === target);
+          if (same) matches.set(row.id, row);
+        }
+        if (matches.size > 1 || !result.hasNext) break;
+        if (page >= 20) throw new Error('网站订阅较多，请到「番剧订阅 → 网站已订阅」选择要取消的番剧。');
+      }
+      if (matches.size === 1) item = matches.values().next().value;
+      if (!item?.bgmId) throw new Error('无法核对唯一的网站订阅，请到「番剧订阅 → 网站已订阅」确认番剧条目。');
+    } finally {
+      A.loading = false;
+      render();
+    }
+    confirm('unsubscribe', item);
   }
   async function change(){
     if(A.busy||!A.pending)return;const {action,item}=A.pending,identityKey=action+':'+item.id;
@@ -111,13 +144,16 @@
       if(!A.identities.has(identityKey))A.identities.set(identityKey,'subscription:'+crypto.randomUUID());
       const result=await native(action,{animeId:item.id,expectedUserId:A.user.id,commandIdentity:A.identities.get(identityKey)});verified=result.verified;subscribed=result.subscribed;existing=result.existing===true;
       if(!verified)throw new Error('网站订阅结果尚未确认。');if(subscribed)A.members.add(item.id);else A.members.delete(item.id);A.identities.delete(identityKey);
-      item.subscribed=subscribed;$('anibt-change-dialog').close();toast(subscribed?'已同步订阅到 AniBT，之后的新发布会按偏好追踪。':'已从 AniBT 取消订阅。');
+      item.subscribed=subscribed;
+      for(const row of A.items)if(row.id===item.id)row.subscribed=subscribed;
     }catch(e){
       if(changeId){try{const current=await native('memberships',{expectedUserId:A.user.id});subscribed=current.animeIds.includes(item.id);verified=true;A.members=new Set(current.animeIds);}catch{}}
       throw e;
     }finally{
-      try{if(changeId)await api('anibt/finish',{changeId,verified,subscribed,existing});}finally{A.busy=false;S.operation=null;$('anibt-confirm-change').disabled=false;renderStatus();render();await loadStatus();await loadFeed(true);}
+      try{if(changeId)await api('anibt/finish',{changeId,verified,subscribed,existing});}finally{A.busy=false;S.operation=null;$('anibt-confirm-change').disabled=false;renderStatus();render();await Promise.allSettled([loadStatus(),loadFeed(true)]);}
     }
+    $('anibt-change-dialog').close();
+    toast(subscribed?'已同步订阅到 AniBT，之后的新发布会按偏好追踪。':'已从 AniBT 取消订阅。');
     if(A.mode==='mine')await loadMine(A.page);
     if(action==='subscribe'&&verified&&subscribed&&!existing)await offerCatchup(item);
 
@@ -145,8 +181,9 @@
   $('anibt-catalog-results').addEventListener('error',e=>{if(e.target.tagName==='IMG')e.target.hidden=true;},true);
   $('anibt-next').addEventListener('click',guarded(()=>A.mode==='mine'?loadMine(A.page+1):search(true)));
   $('anibt-previous').addEventListener('click',guarded(()=>loadMine(A.page-1)));
-  $('anibt-catalog-results').addEventListener('click',e=>{const resource=e.target.closest('[data-site-resources]');if(resource){guarded(()=>window.AniBTResources.open(A.items[Number(resource.dataset.siteResources)]))();return;}const action=e.target.closest('[data-site-action]');if(action)confirm(action.dataset.siteAction,Number(action.dataset.siteIndex));const preferences=e.target.closest('[data-site-preferences]');if(preferences){const item=A.items[Number(preferences.dataset.sitePreferences)];openAnimeRule({title:item.title,bgmId:item.bgmId,items:[{folderName:item.title}]});}});
+  $('anibt-catalog-results').addEventListener('click',e=>{const resource=e.target.closest('[data-site-resources]');if(resource){guarded(()=>window.AniBTResources.open(A.items[Number(resource.dataset.siteResources)]))();return;}const action=e.target.closest('[data-site-action]');if(action)confirm(action.dataset.siteAction,A.items[Number(action.dataset.siteIndex)]);const preferences=e.target.closest('[data-site-preferences]');if(preferences){const item=A.items[Number(preferences.dataset.sitePreferences)];openAnimeRule({title:item.title,bgmId:item.bgmId,items:[{folderName:item.title}]});}});
   $('anibt-catalog-results').addEventListener('keydown',guarded(e=>{if(!['Enter',' '].includes(e.key)||e.target.tagName==='BUTTON')return;const b=e.target.closest('[data-site-resources]');if(b){e.preventDefault();return window.AniBTResources.open(A.items[Number(b.dataset.siteResources)]);}}));
   $('anibt-confirm-change').addEventListener('click',guarded(change));$('anibt-change-dialog').addEventListener('cancel',e=>{if(A.busy)e.preventDefault();});
+  window.AniBTSubscriptionActions = { unsubscribeFromManagement };
   window.AniBTLibrary={enter:()=>{render();if(S.accountLogin){S.accountLogin=false;guarded(async()=>{await connect(true);if(A.mode==='season'&&!A.seasonData)await loadSeason();})();}else if(A.mode==='season'&&!A.seasonData&&!A.loading)guarded(()=>loadSeason())();},refresh:async()=>{coverTried.clear();scoreCache.clear();episodesCache.clear();window.AniBTCovers?.refresh();await(A.mode==='mine'?loadMine(A.page):A.mode==='season'?loadSeason(A.seasonKey,true):search());for(const item of A.items){item.scoreChecked=false;item.episodesChecked=false;}coverTried.clear();await hydrateCovers(true);}};render();
 })();

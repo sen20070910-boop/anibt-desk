@@ -224,7 +224,7 @@ function statusBadge(item) {
 }
 function animeList() {
   const map = new Map();
-  for (const item of S.feed.filter((i) => !i.inWatchedLibrary)) {
+  for (const item of S.feed.filter(visibleSubscriptionRelease)) {
     const name = item.animeTitle || "未命名番剧";
     if (!map.has(name))
       map.set(name, { title: name, bgmId: item.bgmId, items: [] });
@@ -241,6 +241,9 @@ function animeList() {
           : "title:" + norm(anime.title).trim(),
       ) || "",
   }));
+}
+function visibleSubscriptionRelease(item) {
+  return !item.inWatchedLibrary && !item.siteUnsubscribed;
 }
 function matchingRule(anime) {
   return S.status?.config.rules.find((r) =>
@@ -263,7 +266,7 @@ function animeCard(anime, index) {
     ["#9fb8bb", "#d7e3de"],
     ["#c9adab", "#f0dfd1"],
   ][index % 3];
-  return `<article class="anime-card"><div class="anime-poster" role="button" tabindex="0" data-resource-index="${index}" style="--poster-start:${colors[0]};--poster-end:${colors[1]}"><span class="poster-number">ANIME / ${String(index + 1).padStart(2, "0")}</span><span class="poster-text">${escape(anime.title.slice(0, 7))}</span>${anime.cover ? `<img data-cover-url="${escape(anime.cover)}" data-cover-title="${escape(anime.items[0]?.linkedTitle || anime.title)}" data-cover-bgm="${escape(anime.bgmId)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : ""}</div><div class="anime-details"><h3 role="button" tabindex="0" data-resource-index="${index}" title="点击查看已有资源：${escape(anime.title)}">${escape(anime.title)}</h3><div class="anime-meta"><span class="badge success">${rule?.enabled === false ? "已暂停" : "订阅中"}</span><span>最新第 ${escape(latest)} 集</span><span>${anime.items.length} 条发布</span></div><div class="anime-groups" title="${escape(groups.join(" · "))}">${escape(groups.join(" · "))}</div><div class="anime-location" title="${escape(rule?.savePath || anime.items[0]?.folderName || anime.title)}">${rule?.savePath ? "指定目录：" + escape(rule.savePath) : "自动归档到「" + escape(anime.items[0]?.folderName || anime.title) + "」"}</div><div class="anime-foot"><button type="button" class="text-button" data-resource-index="${index}">已有资源 / 选集下载</button><button type="button" class="text-button" data-bind-index="${index}">关联番剧 / 别名</button><button class="text-button" data-rule-index="${index}">单独设置 ↗</button></div></div></article>`;
+  return `<article class="anime-card"><div class="anime-poster" role="button" tabindex="0" data-resource-index="${index}" style="--poster-start:${colors[0]};--poster-end:${colors[1]}"><span class="poster-number">ANIME / ${String(index + 1).padStart(2, "0")}</span><span class="poster-text">${escape(anime.title.slice(0, 7))}</span>${anime.cover ? `<img data-cover-url="${escape(anime.cover)}" data-cover-title="${escape(anime.items[0]?.linkedTitle || anime.title)}" data-cover-bgm="${escape(anime.bgmId)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : ""}</div><div class="anime-details"><h3 role="button" tabindex="0" data-resource-index="${index}" title="点击查看已有资源：${escape(anime.title)}">${escape(anime.title)}</h3><div class="anime-meta"><span class="badge success">${rule?.enabled === false ? "已暂停" : "订阅中"}</span><span>最新第 ${escape(latest)} 集</span><span>${anime.items.length} 条发布</span></div><div class="anime-groups" title="${escape(groups.join(" · "))}">${escape(groups.join(" · "))}</div><div class="anime-location" title="${escape(rule?.savePath || anime.items[0]?.folderName || anime.title)}">${rule?.savePath ? "指定目录：" + escape(rule.savePath) : "自动归档到「" + escape(anime.items[0]?.folderName || anime.title) + "」"}</div><div class="anime-foot"><button type="button" class="text-button" data-resource-index="${index}">已有资源 / 选集下载</button><button type="button" class="text-button" data-bind-index="${index}">关联番剧 / 别名</button><button class="text-button" data-rule-index="${index}">单独设置 ↗</button>${S.page === "subscriptions" ? `<button type="button" class="text-button" data-unsubscribe-index="${index}" aria-label="取消订阅《${escape(anime.title)}》">取消订阅</button>` : ""}</div></div></article>`;
 }
 function releaseTable(items) {
   if (!items.length)
@@ -299,7 +302,7 @@ function renderFeed() {
     renderMarkup(
       "recent-table",
       S.feedLoaded
-        ? releaseTable(S.feed.filter((i) => !i.inWatchedLibrary).slice(0, 6))
+        ? releaseTable(S.feed.filter(visibleSubscriptionRelease).slice(0, 6))
         : empty("正在整理最新发布", "稍后会显示真实的订阅资源。"),
     );
   if (S.page === "subscriptions") renderReleaseList();
@@ -309,7 +312,7 @@ function renderReleaseList() {
   const filter = $("release-filter").value;
   const items = S.feed.filter(
     (i) =>
-      !i.inWatchedLibrary &&
+      visibleSubscriptionRelease(i) &&
       (!query ||
         norm(i.title + " " + i.animeTitle + " " + i.groupName).includes(
           query,
@@ -680,6 +683,23 @@ document.addEventListener(
       return window.AniBTResources.open(
         animeList()[Number(b.dataset.resourceIndex)],
       );
+  }),
+);
+$("subscription-cards").addEventListener(
+  "click",
+  guarded(async (event) => {
+    const button = event.target.closest("[data-unsubscribe-index]");
+    if (!button || button.disabled) return;
+    const anime = animeList()[Number(button.dataset.unsubscribeIndex)];
+    if (!anime) return;
+    button.disabled = true;
+    button.textContent = "正在核对…";
+    try {
+      await window.AniBTSubscriptionActions.unsubscribeFromManagement(anime);
+    } finally {
+      button.disabled = false;
+      button.textContent = "取消订阅";
+    }
   }),
 );
 document.addEventListener(

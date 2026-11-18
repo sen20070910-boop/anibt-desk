@@ -307,6 +307,7 @@ export function describeItems(
       animeTitle: item.animeTitle,
       linkedTitle: item.linkedTitle || "",
       bgmId: item.bgmId,
+      siteUnsubscribed: siteControl.unsubscribed?.[item.bgmId] === true,
       episode: item.episode,
       version: item.version,
       folderName: animeFolderName(item),
@@ -747,6 +748,7 @@ export function makeApplication({
       if (change.action === "unsubscribe") {
         if (verified && input.subscribed === false) {
           control.blocked[change.bgmId] = true;
+          control.unsubscribed[change.bgmId] = true;
           const state = loadState(
             statePath(c, configFile),
             c,
@@ -759,13 +761,10 @@ export function makeApplication({
             )
               delete state.pending[id];
           atomicWrite(statePath(c, configFile), state);
-        } else if (
-          verified &&
-          input.subscribed === true &&
-          !change.beforeBlocked
-        )
-          delete control.blocked[change.bgmId];
-        else if (!verified) control.blocked[change.bgmId] = true;
+        } else if (verified && input.subscribed === true) {
+          delete control.unsubscribed[change.bgmId];
+          if (!change.beforeBlocked) delete control.blocked[change.bgmId];
+        } else if (!verified) control.blocked[change.bgmId] = true;
       } else if (verified && input.subscribed === true) {
         // Set the date while the watcher is still stopped. Explicit user dates always win.
         if (!change.wasSubscribed && input.existing !== true) {
@@ -802,6 +801,7 @@ export function makeApplication({
           }
         }
         delete control.blocked[change.bgmId];
+        delete control.unsubscribed[change.bgmId];
       }
       saveAniBTControl(configFile, control);
       feedCache = null;

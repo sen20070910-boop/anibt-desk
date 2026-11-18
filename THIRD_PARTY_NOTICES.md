@@ -9,6 +9,7 @@ Microsoft WebView2 Runtime is installed separately and is not bundled here.
 
 Bundled JavaScript dependencies:
 
+- opencc-js 1.4.2: MIT AND Apache-2.0; portable bundle includes the package's LICENSE, Apache-2.0 license and third-party notices in licenses/npm/opencc-js-1.4.2/.
 - @nodable/entities 3.1.0: MIT; licenses/nodable-entities-LICENSE.txt (upstream source in SOURCE.txt)
 - anynum 1.0.1: MIT; licenses/npm/anynum-1.0.1/
 - boolbase 1.0.0: ISC; licenses/boolbase-LICENSE.txt (upstream source in SOURCE.txt)

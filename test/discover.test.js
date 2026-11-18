@@ -95,3 +95,83 @@ test('catalog aliases expand a specific season and leave unrelated titles out', 
   assert.deepEqual(calls.filter(url => url.hostname === 'api.animes.garden').map(url => url.searchParams.get('search')),
     ['新番 第二季', '新番の物語 第2期', 'New Anime S2']);
 });
+
+test('an explicit first season also searches its unnumbered title, while rejecting labeled sequels', async () => {
+  const base = '药屋少女的呢喃';
+  const query = base + ' 第一季';
+  const releases = [
+    '药屋少女的呢喃 - 01',
+    '藥師少女的獨語 第一季 [1-24]',
+    '药屋少女的呢喃 第二季 - 01',
+    'Kusuriya no Hitorigoto S02E01',
+    '薬屋のひとりごと 第3期',
+    'The Apothecary Diaries 2nd Season',
+  ];
+  const network = {
+    cacheKey: () => 'test',
+    close: async () => {},
+    async read(address) {
+      const q = new URL(address).searchParams.get('search');
+      return { text: JSON.stringify({
+        status: 'OK',
+        resources: q === base ? releases.map((title, i) => ({
+          title, magnet: 'magnet:?xt=urn:btih:' + String(i).repeat(40), provider: 'dmhy', providerId: String(i + 1),
+        })) : [],
+      }), via: 'test' };
+    },
+  };
+  const discovery = createDiscovery(() => ({}), { network });
+  const result = await discovery.search({ query, sources: ['garden'] });
+  assert.ok(result.aliases.includes(base));
+  assert.deepEqual(result.items.map(item => item.title), releases.slice(0, 2));
+  assert.equal((await discovery.search({ query, sources: ['garden'], fuzzy: false })).total, 0);
+});
+
+test('VCB-only searches find an alternate-name release on Mikan if the official site requires verification', async () => {
+  const release = '[喵萌奶茶屋&VCB-Studio] 药师少女的独语 1080p BDRip [S1 Reseed Fin]';
+  const network = {
+    cacheKey: () => 'test',
+    close: async () => {},
+    async read(address) {
+      const url = new URL(address);
+      if (url.hostname === 'vcb-s.com') throw Object.assign(new Error('challenge'), { code: 'BROWSER_REQUIRED' });
+      if (url.hostname === 'mikanime.tv' && url.searchParams.get('searchstr') === '药师少女的独语') {
+        return { text: '<table class="tbl-border"><tbody><tr><td><a href="/Home/Episode/' + hash + '">' + release + '</a>'
+          + '<input data-magnet="magnet:?xt=urn:btih:' + hash + '"></td><td>40 GiB</td></tr></tbody></table>', via: 'test' };
+      }
+      throw new Error('no results from this source');
+    },
+  };
+  const service = createDiscovery(() => ({}), { network });
+  const result = await service.search({ query: '药屋少女的呢喃 第一季', sources: ['vcb'] });
+  assert.equal(result.providers[0].state, 'fallback');
+  assert.match(result.providers[0].message, /蜜柑计划/);
+  assert.equal(result.items[0].title, release);
+  assert.deepEqual(result.items[0].sources, ['vcb']);
+  assert.deepEqual(result.items[0].links, [{ source: 'mikan', url: 'https://mikanime.tv/Home/Episode/' + hash }]);
+});
+
+test('script variants and release-style season numbers resolve only the intended catalog season', async () => {
+  const catalog = [
+    { bgmId: 10, title: { chinese: '深夜侦探', chineseTraditional: '深夜偵探' } },
+    { bgmId: 20, title: { chinese: '深夜侦探 第二季', chineseTraditional: '深夜偵探 第二季', native: '探偵 第2期' } },
+  ];
+  const calls = [];
+  const network = {
+    cacheKey: () => 'test',
+    close: async () => {},
+    async read(address) {
+      const url = new URL(address);
+      if (url.hostname === 'anibt.net') {
+        return { text: JSON.stringify({ page: catalog }) };
+      }
+      calls.push(url.searchParams.get('search'));
+      return { text: '{"status":"OK","resources":[]}' };
+    },
+  };
+  const discovery = createDiscovery(() => ({}), { network });
+  const result = await discovery.search({ query: '深夜偵探 S02', sources: ['garden'] });
+  assert.deepEqual(result.aliases, ['深夜侦探 第二季', '深夜偵探 第二季', '探偵 第2期']);
+  assert.equal(calls.includes('深夜侦探'), false);
+  assert.equal(calls.includes('深夜偵探'), false);
+});

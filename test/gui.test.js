@@ -289,7 +289,14 @@ test('website account linking checks RSS identity and website changes suspend/re
  let r=await f.request('anibt/begin',{action:'subscribe',bgmId:'123',userId:'user123'});assert.equal(r.status,200);assert.deepEqual(actions,['stop']);assert.equal((await f.request('action',{action:'check'})).status,409);
  assert.ok(readAniBTControl(f.configFile,f.c).baseline['123']);assert.equal((await f.request('anibt/finish',{changeId:r.data.changeId,verified:true,subscribed:true})).status,200);assert.deepEqual(actions,['stop','start']);
  const s=emptyState();s.pending.one={item,source:sourceKey(f.c.rssUrl)};s.pending.other={item:{...item,bgmId:'456'},source:sourceKey(f.c.rssUrl)};s.episodes.keep='processed';atomicWrite(statePath(f.c,f.configFile),s);
- r=await f.request('anibt/begin',{action:'unsubscribe',bgmId:'123',userId:'user123'});await f.request('anibt/finish',{changeId:r.data.changeId,verified:true,subscribed:false});const final=loadState(statePath(f.c,f.configFile));assert.equal(final.pending.one,undefined);assert.ok(final.pending.other);assert.equal(final.episodes.keep,'processed');assert.equal(readAniBTControl(f.configFile,f.c).blocked['123'],true);assert.equal((await f.request('feed')).data.items[0].reason,'已从 AniBT 退订');
+ r=await f.request('anibt/begin',{action:'unsubscribe',bgmId:'123',userId:'user123'});await f.request('anibt/finish',{changeId:r.data.changeId,verified:true,subscribed:false});const final=loadState(statePath(f.c,f.configFile));assert.equal(final.pending.one,undefined);assert.ok(final.pending.other);assert.equal(final.episodes.keep,'processed');assert.equal(readAniBTControl(f.configFile,f.c).blocked['123'],true);
+ const stale=(await f.request('feed')).data.items[0];
+ assert.equal(stale.siteUnsubscribed,true,'confirmed cancellation hides a stale RSS entry');
+ assert.equal(stale.reason,'已从 AniBT 退订');
+ r=await f.request('anibt/begin',{action:'subscribe',bgmId:'123',userId:'user123'});
+ assert.equal(r.status,200);
+ await f.request('anibt/finish',{changeId:r.data.changeId,verified:true,subscribed:true});
+ assert.equal((await f.request('feed')).data.items[0].siteUnsubscribed,false);
 });
 
 test('new confirmed website subscriptions get the Beijing subscription day before the watcher resumes',async t=>{

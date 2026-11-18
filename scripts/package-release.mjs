@@ -199,6 +199,8 @@ for (const [relative, meta] of Object.entries(lock.packages || {})) {
         /^(licen[cs]e|copying|notice)(\.|$|-)/i.test(name) &&
         fs.statSync(path.join(folder, name)).isFile(),
     );
+  if (pkg.name === "opencc-js")
+    licenses.push("LICENSES/Apache-2.0.txt", "THIRD_PARTY_LICENSES.md");
   if (!licenses.length) {
     const fallback = {
       "@nodable/entities": "nodable-entities",
