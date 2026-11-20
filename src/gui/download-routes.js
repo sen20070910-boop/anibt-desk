@@ -462,6 +462,12 @@ export function createDownloadRoutes(ctx) {
       );
       return;
     }
+    if (route === "POST /api/discover/subtitles") {
+      ctx.json(res, 200, {
+        items: await ctx.discovery.subtitleDetails(body.ids),
+      });
+      return;
+    }
     if (route === "POST /api/discover/path") {
       const c = ctx.getConfig(),
         raw = ctx.discovery.peek
@@ -681,6 +687,7 @@ export function createDownloadRoutes(ctx) {
               old?.status || (!existing || recovered ? "added" : "existing"),
             hash: item.infoHash,
             kind: "manual",
+            origin: body.association ? "subscription" : "discovery",
             paused: c.qb.paused || added?.startPending === true,
             ...(!existing && fileSelection
               ? { selectiveDownload: fileSelection.priorities.includes(0) }

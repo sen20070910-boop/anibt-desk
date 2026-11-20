@@ -72,3 +72,12 @@ test('when the GitHub API is rate-limited, the public latest redirect supplies t
  assert.deepEqual(attempted, ['https://api.github.com/repos' + path + '/releases/latest','https://github.com' + path + '/releases/latest']);
  await assert.rejects(() => newChecker('https://example.test' + path + '/releases/tag/v999.0.0').check(), /发布页面地址不符/);
 });
+
+test('catalog covers match a unique romanized title to a movie even without its subject ID', async () => {
+  const { createAnimeCatalog } = await import('../src/anibt-catalog.js');
+  const cover='https://r2.anibt.net/poster.webp';
+  const catalog=createAnimeCatalog(()=>({}),{network:{read:async()=>({text:JSON.stringify({page:[{_id:'film',bgmId:265372,format:'MOVIE',title:{chinese:'若能与你共乘海浪之上',romaji:'Kimi to, Nami ni Noretara'},coverImage:{large:cover}}]})})}});
+  const result=(await catalog.covers({items:[{title:'Kimi to Nami ni Noretara',bgmId:''}]})).items[0];
+  assert.equal(result.cover,cover);
+  assert.equal(result.format,'MOVIE');
+});

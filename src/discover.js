@@ -5,7 +5,8 @@ import { Converter } from 'opencc-js/t2cn';
 import { parseFeed } from './feed.js';
 import { normalizeHash, magnetHash, torrentInfoHash } from './torrent.js';
 import { createSourceNetwork, sourceUrl } from './source-network.js';
-import { titleSubtitleCodes } from './subtitle-language.js';
+import { hasMultipleSubtitles, titleSubtitleCodes } from './subtitle-language.js';
+import { nyaaSubtitlePage, readNyaaSubtitleDetails } from './nyaa-subtitles.js';
 
 export const sourceNames = {
   anibt: 'AniBT',
@@ -194,7 +195,7 @@ function distinctAliases(query, names) {
 }
 export function createDiscovery(getPreferences,{network=createSourceNetwork(getPreferences),now=()=>Date.now()}={}) {
   const cache=new Map(),results=new Map();
-  const remember=item=>{const id=randomBytes(16).toString('hex');results.set(id,{item,at:now()});return{resultId:id,title:item.title,workTitle:item.workTitle,groupName:item.groupName,languages:item.languages,resolution:item.resolution,subtitles:item.subtitles,sizeText:item.sizeText,sizeBytes:item.sizeBytes,seeders:item.seeders,publishedAt:item.publishedAt,sources:item.sources,links:item.links,kind:item.kind,downloadable:!!(item.infoHash||item.torrentUrl||item.kind==='project'),description:item.description||'',infoHash:item.infoHash};};
+  const remember=item=>{const id=randomBytes(16).toString('hex');results.set(id,{item,at:now()});return{resultId:id,title:item.title,workTitle:item.workTitle,groupName:item.groupName,languages:item.languages,resolution:item.resolution,subtitles:item.subtitles,sizeText:item.sizeText,sizeBytes:item.sizeBytes,seeders:item.seeders,publishedAt:item.publishedAt,sources:item.sources,links:item.links,kind:item.kind,downloadable:!!(item.infoHash||item.torrentUrl||item.kind==='project'),description:item.description||'',infoHash:item.infoHash,multipleSubtitles:hasMultipleSubtitles(item.title),subtitleLookup:!!nyaaSubtitlePage(item)};};
   const memo=(key,run,force)=>{key=network.cacheKey()+'|'+key;const old=cache.get(key);if(old&&(old.pending||!force&&now()-old.at<120000))return old.promise;const promise=run();const entry={at:now(),promise,pending:true};cache.set(key,entry);promise.then(()=>entry.pending=false,()=>{if(cache.get(key)?.promise===promise)cache.delete(key);});return promise;};
   async function provider(source,query,force=false) {
     return memo(source+'|'+query,async()=>{
@@ -320,5 +321,32 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     if(!item.infoHash||(!item.magnet&&!item.torrentData))throw new Error('没有可直接下载的有效种子。');return item;
   }
   function peek(id){const entry=results.get(id);if(!entry||now()-entry.at>1800000)throw new Error('这条搜索结果已过期，请重新搜索。');return{...entry.item};}
-  return{search,resolve,peek,close:network.close};
+  let activeSubtitleBatches = 0;
+  async function subtitleDetails(ids) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 12 ||
+      ids.some(id => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)))
+      throw new Error('请选择至多 12 份当前搜索结果。');
+    if (activeSubtitleBatches >= 2) throw new Error('正在核对其他资源的字幕，请稍后再试。');
+    const requests = [...new Set(ids)].map(resultId => ({ resultId, url: nyaaSubtitlePage(peek(resultId)) }));
+    activeSubtitleBatches++;
+    try {
+      const details = [];
+      for (let offset = 0; offset < requests.length; offset += 3) {
+        details.push(...await Promise.all(requests.slice(offset, offset + 3).map(async ({ resultId, url }) => {
+          if (!url) return { resultId, state: 'unsupported' };
+          try {
+            const evidence = await memo('subtitle-page|' + url, async () => {
+              const { text } = await network.read(url, { maxBytes: 600000, timeoutMs: 4500 });
+              return readNyaaSubtitleDetails(text);
+            }, false);
+            return { resultId, state: 'checked', ...evidence };
+          } catch {
+            return { resultId, state: 'unavailable' };
+          }
+        })));
+      }
+      return details;
+    } finally { activeSubtitleBatches--; }
+  }
+  return{search,resolve,peek,subtitleDetails,close:network.close};
 }

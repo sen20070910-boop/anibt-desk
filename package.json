@@ -1,6 +1,6 @@
 {
   "name": "anibt-qb",
-  "version": "2.30.1",
+  "version": "2.31.0",
   "private": true,
   "description": "AniBT 我的订阅 → qBittorrent 命令行自动追番工具",
   "type": "module",

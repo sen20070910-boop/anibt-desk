@@ -1,4 +1,7 @@
 import net from 'node:net';
+import { createWriteStream } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { fetch, ProxyAgent } from 'undici';
 
 const hosts=new Set(['api.github.com','r2.anibt.net','anibt.net','www.dmhy.org','share.dmhy.org','dmhy.org','nyaa.si','vcb-s.com','www.vcb-s.com','api.animes.garden','animes.garden','www.animes.garden','mikanime.tv','mikanani.me']);
@@ -19,13 +22,22 @@ function latestReleaseUrl(value) {
     throw new Error('GitHub 更新页面地址无效。');
   return u.href;
 }
+function releaseAssetUrl(value, base) {
+  const url = new URL(value, base);
+  const project = /^\/sen20070910-boop\/anibt-desk\/releases\/download\/v(\d+\.\d+\.\d+)\/AniBT-qB-v\1-Windows-x64\.zip(?:\.sha256)?$/;
+  const official = url.hostname === 'github.com' && !url.search && project.test(url.pathname);
+  const storage = base && ['release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com'].includes(url.hostname);
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || !(official || storage))
+    throw new Error('GitHub 更新文件地址不符。');
+  return url.href;
+}
 export function createSourceNetwork(getPreferences) {
   const agents=new Map();let proxyProbe=null,proxyState={at:0,available:false};
   const detectProxy=async()=>{if(Date.now()-proxyState.at<30000)return proxyState.available;if(proxyProbe)return proxyProbe;proxyProbe=new Promise(resolve=>{const socket=net.connect({host:'127.0.0.1',port:7890});const end=available=>{socket.destroy();proxyState={at:Date.now(),available};resolve(available);};socket.setTimeout(500,()=>end(false));socket.once('connect',()=>end(true));socket.once('error',()=>end(false));}).finally(()=>proxyProbe=null);return proxyProbe;};
   const cacheKey=()=>{const p=getPreferences();return(p.networkMode||'auto')+'|'+(p.proxyUrl||'http://127.0.0.1:7890');};
-  async function read(value,{binary=false,maxBytes=8_000_000,timeoutMs=15000,releaseRedirect=false}={}) {
-    const url=releaseRedirect?latestReleaseUrl(value):sourceUrl(value);const prefs=getPreferences();const mode=prefs.networkMode||'auto';const proxy=mode==='custom'?validateProxy(prefs.proxyUrl):await detectProxy()?'http://127.0.0.1:7890':'';
-    const proxyFirst=releaseRedirect||['api.github.com','r2.anibt.net','dmhy.org','www.dmhy.org','share.dmhy.org','nyaa.si','vcb-s.com','www.vcb-s.com'].includes(new URL(url).hostname);
+  async function read(value,{binary=false,maxBytes=8_000_000,timeoutMs=15000,releaseRedirect=false,releaseAsset=false,destination}={}) {
+    const url=releaseAsset?releaseAssetUrl(value):releaseRedirect?latestReleaseUrl(value):sourceUrl(value);const prefs=getPreferences();const mode=prefs.networkMode||'auto';const proxy=mode==='custom'?validateProxy(prefs.proxyUrl):await detectProxy()?'http://127.0.0.1:7890':'';
+    const proxyFirst=releaseAsset||releaseRedirect||['api.github.com','r2.anibt.net','dmhy.org','www.dmhy.org','share.dmhy.org','nyaa.si','vcb-s.com','www.vcb-s.com'].includes(new URL(url).hostname);
     const routes=mode==='direct'?['']:mode==='custom'?[proxy]:proxy?(proxyFirst?[proxy,'']:['',proxy]):[''];
     let last;
     for(const route of routes){try{
@@ -38,7 +50,24 @@ export function createSourceNetwork(getPreferences) {
           if([301,302,303,307,308].includes(r.status)&&location)return {location};
           throw new Error(`站点未返回最新发布页（HTTP ${r.status}）。`);
         }
-        if([301,302,303,307,308].includes(r.status)){await r.body?.cancel();target=sourceUrl(r.headers.get('location'),target);continue;}
+        if([301,302,303,307,308].includes(r.status)){await r.body?.cancel();target=(releaseAsset?releaseAssetUrl:sourceUrl)(r.headers.get('location'),target);continue;}
+        if (releaseAsset && !r.ok) { await r.body?.cancel(); throw new Error(`站点返回 HTTP ${r.status}。`); }
+        if (releaseAsset && destination) {
+          let size = 0;
+          try {
+            await pipeline(r.body, async function* (stream) {
+              for await (const chunk of stream) {
+                size += chunk.length;
+                if (size > maxBytes) throw new Error('站点返回的更新包超出大小限制。');
+                yield chunk;
+              }
+            }, createWriteStream(destination, { flags: 'wx' }));
+          } catch (error) {
+            await unlink(destination).catch(()=>{});
+            throw error;
+          }
+          return { size };
+        }
         const chunks=[];let size=0;for await(const chunk of r.body){size+=chunk.length;if(size>maxBytes){await r.body.cancel().catch(()=>{});throw new Error('站点返回内容过大，请缩小搜索范围。');}chunks.push(Buffer.from(chunk));}
         const bytes=Buffer.concat(chunks);const text=binary?'':bytes.toString('utf8');
         if(/<title>\s*Just a moment|cf-chl-|challenge-platform/i.test(text)){throw Object.assign(new Error('站点要求浏览器验证。'),{code:'BROWSER_REQUIRED'});}

@@ -1,5 +1,9 @@
 import { localSnapshots } from "./local-snapshots.js";
 import { createStateStore } from "./state-store.js";
+import {
+  createPortableUpdater,
+  guardPortableUpdate,
+} from "./portable-updater.js";
 import { createSubscriptionRoutes } from "./gui/subscription-routes.js";
 import { createSettingsRoutes } from "./gui/settings-routes.js";
 import { createDownloadRoutes } from "./gui/download-routes.js";
@@ -520,7 +524,7 @@ export function makeApplication({
         if (remaining) throw new Error("删除结果待核对");
       }
       confirmed = true;
-      const result =
+      let result =
         !targets.length && previousResult
           ? {
               removedTasks: 0,
@@ -529,6 +533,19 @@ export function makeApplication({
               folderErrors: previousResult.folderErrors || 0,
             }
           : finishDeletion(op, active);
+      // qB may remove the task before its asynchronous file cleanup reaches disk.
+      for (
+        let retries = 0;
+        targets.length &&
+        op.cleanupFolders?.length &&
+        result.filesRemaining &&
+        retries < 5;
+        retries++
+      ) {
+        await sleep(350);
+        active = await qb.list();
+        result = finishDeletion(op, active);
+      }
       op = operations.complete(op, result);
       const outcome = commitWatchedOperation(op, {
         config: c,
@@ -718,7 +735,8 @@ export function makeApplication({
     const c = getConfig();
     const qb = deps.qb || new QbClient(c);
     let value;
-    let taskHashes = new Set();
+    let taskHashes = new Set(),
+      taskFolders = [];
     try {
       const version = await qb.login();
       const [all, prefs] = await Promise.all([
@@ -764,12 +782,17 @@ export function makeApplication({
           typeof t.hash === "string" ? [t.hash.toLowerCase()] : [],
         ),
       );
+      taskFolders = all.map((t) => ({
+        hash: t.hash,
+        save_path: t.save_path,
+        content_path: t.content_path,
+      }));
     } catch (e) {
       value = { connected: false, error: e.message, torrents: [] };
     } finally {
       await qb.logout();
     }
-    qbCache = { at: Date.now(), value, taskHashes };
+    qbCache = { at: Date.now(), value, taskHashes, taskFolders };
     return qbCache;
   };
   const requireIdle = ({ recovery = false } = {}) => {
@@ -1016,10 +1039,17 @@ export function makeApplication({
     path.dirname(configFile),
     "data/library-tools.json",
   );
+  const updateNetwork = deps.updateNetwork || createSourceNetwork(preferences);
   const releaseChecker = createReleaseChecker({
     read: () => readJsonFile(updateFile, {}),
     write: (value) => atomicWrite(updateFile, value),
-    network: deps.updateNetwork || createSourceNetwork(preferences),
+    network: updateNetwork,
+  });
+  const portableUpdater = createPortableUpdater({
+    root,
+    configFile,
+    network: updateNetwork,
+    releaseChecker,
   });
 
   const serviceContext = {
@@ -1146,6 +1176,9 @@ export function makeApplication({
     },
     get qbInfo() {
       return qbInfo;
+    },
+    get qbSnapshot() {
+      return qbSnapshot;
     },
     async discoveryTaskPresence(hashes, force) {
       const snapshot = await qbSnapshot(force);
@@ -1504,6 +1537,7 @@ export function makeApplication({
           version: APP_VERSION,
           repository: releaseChecker.settings().repository,
           repositoryOverride: releaseChecker.settings().override,
+          installer: portableUpdater.status(),
         });
         return;
       }
@@ -1536,11 +1570,21 @@ export function makeApplication({
         return;
       }
       if (route === "POST /api/library/check-update") {
-        json(
-          res,
-          200,
-          await releaseChecker.check({ force: body.automatic !== true }),
-        );
+        json(res, 200, {
+          ...(await releaseChecker.check({ force: body.automatic !== true })),
+          installer: portableUpdater.status(),
+        });
+        return;
+      }
+      if (route === "POST /api/library/install-update") {
+        requireIdle();
+        if (body.confirm !== true) throw new Error("请先确认安装程序更新。");
+        busy = "program-update";
+        try {
+          json(res, 200, await portableUpdater.prepare(body.version));
+        } finally {
+          busy = null;
+        }
         return;
       }
       if (route === "GET /api/library/diagnostics") {
@@ -1941,6 +1985,8 @@ export async function startGui({
   open = true,
   background = false,
 } = {}) {
+  if (path.resolve(configFile) === path.join(root, "config.json"))
+    await guardPortableUpdate(root);
   const windowPath = background ? "/?background=1&page=downloads" : "/";
   const directory = path.join(path.dirname(configFile), "data");
   const descriptor = path.join(directory, "gui.json");

@@ -156,6 +156,7 @@
     void run($("library-tools-open"), status);
   });
   let updateRevision = 0;
+  let currentUpdate = null;
   let autoCheckAfter = 0;
   let checkingUpdate = false;
   async function checkUpdate(automatic) {
@@ -174,10 +175,25 @@
     try {
       const update = await api("library/check-update", { automatic });
       if (revision !== updateRevision) return;
+      currentUpdate = update;
       autoCheckAfter = Date.now() + 86400000;
       text("app-update-notice-text", "程序有新版本 v" + update.latestVersion);
       $("app-update-notice").classList.toggle("hidden", !update.newer);
       result.innerHTML = `<p>${update.newer ? "发现新版" : "最新稳定版"} v${escape(update.latestVersion)}${update.newer ? "" : "，当前无需升级。"}</p><a href="${escape(update.url)}" target="_blank" rel="noopener noreferrer">${update.newer ? "打开发布页下载便携包" : "查看发布页"} ↗</a>${update.notes ? `<pre class="release-notes">${escape(update.notes)}</pre>` : ""}`;
+      const install = $("library-update-install");
+      install.classList.toggle(
+        "hidden",
+        !update.newer || !update.installer?.supported,
+      );
+      install.disabled = !!update.installer?.pending;
+      text(
+        "library-update-install-status",
+        update.installer?.pending
+          ? "更新已准备好。请保存并关闭所有 AniBT 窗口，安装完成后会重新打开。"
+          : update.installer?.phase === "failed"
+            ? "上次更新未完成：" + update.installer.message
+            : "",
+      );
     } catch (error) {
       if (revision !== updateRevision) return;
       autoCheckAfter = Date.now() + 3600000;
@@ -200,6 +216,37 @@
     intervalMs: 3600000,
   });
   setTimeout(() => void checkUpdate(true), 3000);
+  $("library-update-install").addEventListener("click", async () => {
+    const update = currentUpdate;
+    if (!update?.newer || !update.installer?.supported) return;
+    if (
+      !window.confirm(
+        "下载并安装 v" +
+          update.latestVersion +
+          "？校验完成后，请保存并关闭所有 AniBT 窗口。安装完成会自动重新打开。",
+      )
+    )
+      return;
+    const button = $("library-update-install");
+    button.disabled = true;
+    text("library-update-install-status", "正在下载并校验便携包…");
+    try {
+      const result = await api("library/install-update", {
+        version: update.latestVersion,
+        confirm: true,
+      });
+      update.installer.pending = true;
+      text(
+        "library-update-install-status",
+        "v" +
+          result.version +
+          " 已校验。请保存并关闭所有 AniBT 窗口，安装完成后会重新打开。",
+      );
+    } catch (error) {
+      text("library-update-install-status", error.message);
+      button.disabled = false;
+    }
+  });
   $("automatic-backup-settings").addEventListener(
     "click",
     () =>
@@ -243,6 +290,9 @@
         });
         updateRevision++;
         autoCheckAfter = 0;
+        currentUpdate = null;
+        $("library-update-install").classList.add("hidden");
+        text("library-update-install-status", "");
         $("app-update-notice").classList.add("hidden");
         text("library-update-result", "");
         toast("更新来源已保存。");

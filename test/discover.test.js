@@ -180,3 +180,11 @@ test('subtitle labels distinguish explicit subtitle languages from a release aud
   assert.deepEqual(inferRelease('Tokyo Godfathers (2003) [BluRay.1080p.x264.FLAC.ITA.AAC.JAP.ENG.Subs.Ita.Eng.v2]').languages, ['IT', 'EN']);
   assert.deepEqual(inferRelease('Demo [BluRay.1080p.FLAC.ITA.AAC.JAP.ENG]').languages, []);
 });
+
+test('Nyaa release descriptions read subtitle tables and tracks without inferring from audio', async () => {
+  const { readNyaaSubtitleDetails } = await import('../src/nyaa-subtitles.js');
+  const body = '<div id="torrent-description">AUDIO\nLanguage: Japanese\n**_Subtitles_** | English, French\nSUBTITLE-2\nLanguage:Spanish</div><div class="torrent-file-list"><ul><li><i></i>movie.zh-Hans.ass <span>3 KiB</span></li></ul></div>';
+  assert.deepEqual(readNyaaSubtitleDetails(body), { languages:['EN','FR','ES'], sidecars:['CHS'], multiple:false, hasSubtitles:true });
+  assert.deepEqual(inferRelease('Movie.BD.VF.VOSTFR.{EN.ESP.SUBS}.DTS').languages, ['EN','ES','FR']);
+  assert.deepEqual(inferRelease('Movie [Dual Audio] [Multi Subs]').languages, []);
+});

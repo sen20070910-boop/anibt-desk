@@ -42,7 +42,7 @@ export function deletionResult(targets){
 
 // Refresh the displayed warning using the confirmed file list. Older records
 // without a file list keep their warning until someone verifies them manually.
-export function recheckDeletionWarnings(tracking, readOperations, activeHashes) {
+export function recheckDeletionWarnings(tracking, readOperations, activeHashes, activeTorrents) {
   const pendingWarning = row => row?.filesRemaining || row?.unknownFiles || row?.folderErrors;
   if (!Object.values(tracking).some(entry =>
     pendingWarning(entry.showDeletion) || Object.values(entry.deletedEpisodes || {}).some(pendingWarning))) return;
@@ -67,12 +67,16 @@ export function recheckDeletionWarnings(tracking, readOperations, activeHashes) 
     if (!checked.has(op.id)) {
       const rootsAvailable = op.targets.every(target =>
         path.isAbsolute(target.savePath) && fs.existsSync(path.parse(target.savePath).root) && target.files.length);
-      const result = rootsAvailable ? deletionResult(op.targets) : null;
-      checked.set(op.id, result && !result.filesRemaining && !result.unknownFiles);
+      const result = rootsAvailable
+        ? activeTorrents ? finishDeletion(op, activeTorrents) : deletionResult(op.targets)
+        : null;
+      checked.set(op.id, result);
     }
-    if (!checked.get(op.id)) return;
+    const verified = checked.get(op.id);
+    if (!verified || verified.filesRemaining || verified.unknownFiles) return;
     row.filesRemaining = 0;
     row.unknownFiles = 0;
+    if (verified.folderErrors !== undefined) row.folderErrors = verified.folderErrors;
     if (row.folderErrors && op.cleanupFolders?.length && op.cleanupFolders.every(folder => {
       try { fs.lstatSync(folder); return false; }
       catch (error) { return error.code === 'ENOENT'; }
@@ -103,13 +107,24 @@ export function finishDeletion(op, active) {
       return (save && inDirectory(save)) ||
         (content && (inDirectory(content) || directory.startsWith(content + path.sep)));
     })) continue;
-    try {
-      if (!fs.lstatSync(folder).isDirectory() || location(fs.realpathSync(folder)) !== directory) continue;
-      fs.rmdirSync(folder);
-      removedFolders++;
-    } catch (error) {
-      if (error.code === 'ENOENT' || error.code === 'ENOTEMPTY' || error.code === 'EEXIST') continue;
-      folderErrors++;
+    const candidates = new Set([folder]);
+    for (const target of op.targets.filter(target => location(target.savePath) === directory)) {
+      for (const file of target.files) {
+        let parent = path.dirname(path.resolve(target.savePath, file.name));
+        while (location(parent) !== directory && inDirectory(location(parent))) {
+          candidates.add(parent);
+          parent = path.dirname(parent);
+        }
+      }
+    }
+    for (const candidate of [...candidates].sort((a, b) => b.length - a.length)) {
+      try {
+        if (!fs.lstatSync(candidate).isDirectory() || location(fs.realpathSync(candidate)) !== location(candidate)) continue;
+        fs.rmdirSync(candidate);
+        if (location(candidate) === directory) removedFolders++;
+      } catch (error) {
+        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) folderErrors++;
+      }
     }
   }
   return {...result, removedFolders, folderErrors};

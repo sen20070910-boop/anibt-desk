@@ -219,3 +219,12 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 }
 .discovery-file-row small {color: var(--muted);}
 
+
+.progress-show-info{display:flex;align-items:center;gap:16px;min-width:0}
+.progress-show-info h3{overflow-wrap:anywhere}
+.progress-cover.watched-library-cover{width:68px;height:98px}
+.progress-direct-list{margin:16px 0}
+.progress-direct-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.progress-direct-row strong{overflow-wrap:anywhere;font-size:13px}
+.progress-direct-row small{display:block;margin-top:6px;color:var(--muted)}
+.progress-direct-row button{flex-shrink:0}

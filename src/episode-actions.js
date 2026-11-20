@@ -1,5 +1,5 @@
 import path from 'node:path';import fs from 'node:fs';import{createHash}from'node:crypto';
-import{animeKey}from'./progress.js';import{singleEpisode}from'./episodes.js';import{applyAnimeBindings}from'./anime-bindings.js';import{matches}from'./feed.js';import{groupPriority}from'./priority.js';import{localDownloader}from'./history-actions.js';
+import{animeKey,isDirectDiscoveryRecord}from'./progress.js';import{singleEpisode}from'./episodes.js';import{applyAnimeBindings}from'./anime-bindings.js';import{matches}from'./feed.js';import{groupPriority}from'./priority.js';import{localDownloader}from'./history-actions.js';
 import {animeDownloadPath} from './download-path.js';
 import {matchingAnimeRule} from './feed.js';
 
@@ -20,20 +20,22 @@ export async function emptyAnimeFolders(show, targets, qb, config) {
 export const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function episodeContext({items,state,manual,config,key,episode}){
  if(typeof key!=='string'||!key.match(/^(bgm:\d{1,8}|title:.+)$/)||key.length>500||!Number.isInteger(episode)||episode<1||episode>9999)throw new Error('番剧或集数无效。');
- const history=[...Object.entries(state.done).map(([id,j])=>({id,...j})),...Object.entries(manual).map(([id,j])=>({id,...j}))].filter(j=>['added','existing'].includes(j.status));
+ const history=[...Object.entries(state.done).map(([id,j])=>({id,...j})),...Object.entries(manual).map(([id,j])=>({id,...j,direct:isDirectDiscoveryRecord(j)}))].filter(j=>['added','existing'].includes(j.status));
  const rows=applyAnimeBindings([...items,...Object.values(state.pending).map(p=>p.item),...history],config),byHash=new Map();
  for(const row of rows){const hash=(row.infoHash||row.hash||'').toLowerCase();if(!/^[a-f0-9]{40}$/.test(hash))continue;if(!byHash.has(hash))byHash.set(hash,[]);byHash.get(hash).push(row);}
- const candidates=[];for(const[hash,entries]of byHash){const matching=entries.filter(r=>animeKey(r)===key&&singleEpisode(r.episode)===episode);if(!matching.length)continue;const ambiguous=entries.some(r=>animeKey(r)!==key||singleEpisode(r.episode)!==episode);const raw=matching.find(r=>r.infoHash)||matching[0],item={...raw,infoHash:hash,magnet:raw.magnet||'magnet:?xt=urn:btih:'+hash,languages:raw.languages||[],subtitles:raw.subtitles||[],groupName:raw.groupName||raw.title.match(/^\[([^\]]+)\]/)?.[1]||''};const match=matches(item,config);candidates.push({hash,item,ambiguous,matched:match.ok,reason:match.reason,savePath:matching.find(r=>r.savePath)?.savePath||''});}
+ const candidates=[];for(const[hash,entries]of byHash){const matching=entries.filter(r=>!r.direct&&animeKey(r)===key&&singleEpisode(r.episode)===episode);if(!matching.length)continue;const ambiguous=entries.some(r=>animeKey(r)!==key||singleEpisode(r.episode)!==episode);const raw=matching.find(r=>r.infoHash)||matching[0],item={...raw,infoHash:hash,magnet:raw.magnet||'magnet:?xt=urn:btih:'+hash,languages:raw.languages||[],subtitles:raw.subtitles||[],groupName:raw.groupName||raw.title.match(/^\[([^\]]+)\]/)?.[1]||''};const match=matches(item,config);candidates.push({hash,item,ambiguous,matched:match.ok,reason:match.reason,savePath:matching.find(r=>r.savePath)?.savePath||''});}
  candidates.sort((a,b)=>Number(b.matched)-Number(a.matched)||groupPriority(a.item,config).rank-groupPriority(b.item,config).rank||a.item.title.localeCompare(b.item.title,'zh-CN'));
  return {candidates,key,episode};
 }
 export function showContext({items,state,manual,config,key}){
  if(typeof key!=='string'||!key.match(/^(bgm:\d{1,8}|title:.+)$/)||key.length>500)throw new Error('番剧信息无效。');
- const history=[...Object.values(state.done),...Object.values(manual)].filter(j=>['added','existing'].includes(j.status));
+ const history=[...Object.values(state.done),...Object.values(manual).map(job=>({...job,direct:isDirectDiscoveryRecord(job)}))].filter(j=>['added','existing'].includes(j.status));
  const rows=applyAnimeBindings([...items,...Object.values(state.pending).map(p=>p.item),...history],config),hashes=new Map();
  for(const row of rows){const hash=(row.infoHash||row.hash||'').toLowerCase();if(!/^[a-f0-9]{40}$/.test(hash))continue;if(!hashes.has(hash))hashes.set(hash,[]);hashes.get(hash).push(row);}
- const candidates=[];for(const [hash,entries]of hashes){if(entries.some(r=>animeKey(r)===key))candidates.push({hash,ambiguous:entries.some(r=>animeKey(r)!==key)});}
- return {key,candidates,wholeShow:true,latest:rows.filter(r=>animeKey(r)===key).reduce((n,r)=>Math.max(n,singleEpisode(r.episode)||0),0)};
+ const hasSubscription=rows.some(r=>!r.direct&&animeKey(r)===key);
+ const belongs=r=>animeKey(r)===key&&(!hasSubscription||!r.direct);
+ const candidates=[];for(const [hash,entries]of hashes){if(entries.some(belongs))candidates.push({hash,ambiguous:entries.some(r=>animeKey(r)!==key)});}
+ return {key,candidates,wholeShow:true,latest:rows.filter(r=>belongs(r)&&!r.direct).reduce((n,r)=>Math.max(n,singleEpisode(r.episode)||0),0)};
 }
 function normalized(value){const win=/^[a-z]:[\\/]|^\\\\/i.test(value||''),p=win?path.win32:path.posix;if(!value||!p.isAbsolute(value))throw new Error('任务路径不完整，不能自动删除。');let result=p.normalize(value).replaceAll('\\','/').replace(/\/+$/,'');if(!result||/^[a-z]:$/i.test(result))throw new Error('任务路径指向磁盘根目录，不能删除。');return win?result.toLowerCase():result;}
 const overlaps=(a,b)=>a===b||a.startsWith(b+'/')||b.startsWith(a+'/');

@@ -513,3 +513,27 @@ test('subtitle probing only reads the completed local video selected from a mana
  assert.deepEqual((await f.request('history/subtitles', { hash, index: 0 })).data.tracks, [{ language: '简中', codec: 'ass' }]);
  assert.equal(probed, 1);
 });
+
+test('a manually downloaded film uses a work card without episode gap calculation', async () => {
+  const { buildProgress } = await import('../src/progress.js');
+  const hash='f'.repeat(40);
+  const film={kind:'manual',origin:'discovery',status:'added',animeTitle:'Kimi to, Nami ni Noretara',title:'Film BD',hash,episode:'12'};
+  const external=buildProgress({state:emptyState(),manual:{[hash]:film},torrents:[{hash,progress:1}],config:clone(defaults)});
+  assert.equal(external.length,1);
+  assert.equal(external[0].direct,true);
+  assert.deepEqual(external[0].missing,[]);
+  assert.equal(external[0].resources[0].status,'已完成');
+  const subscription={...film,origin:'subscription'};
+  const tracked=buildProgress({state:emptyState(),manual:{[hash]:subscription},config:clone(defaults)});
+  assert.equal(tracked[0].direct,false);
+  assert.equal(tracked[0].latest,12);
+});
+
+test('marking an AniBT series watched excludes unassociated manual editions of the same work', async () => {
+  const { showContext } = await import('../src/episode-actions.js');
+  const hash='f'.repeat(40);
+  const manual={[hash]:{kind:'manual',origin:'discovery',status:'added',animeTitle:item.animeTitle,bgmId:item.bgmId,title:'Unassociated edition',hash,episode:'12'}};
+  const context=showContext({items:[item],state:emptyState(),manual,config:clone(defaults),key:'bgm:123'});
+  assert.deepEqual(context.candidates,[{hash:item.infoHash,ambiguous:false}]);
+  assert.equal(context.latest,1);
+});

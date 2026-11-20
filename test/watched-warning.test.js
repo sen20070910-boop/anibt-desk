@@ -32,3 +32,22 @@ test('a copied deletion warning clears after the original file disappears, while
   assert.equal(legacy.filesRemaining, 1);
   assert.equal(tracking[key].episodeStates[7], true);
 });
+
+test('watched cleanup removes recorded empty nested folders and retains unrelated content', async t => {
+  const { finishDeletion } = await import('../src/watched-operations.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'anibt-folder-'));
+  t.after(() => fs.rmSync(home, {recursive:true,force:true}));
+  const folder = path.join(home, 'film');
+  const edition = path.join(folder, 'release');
+  fs.mkdirSync(path.join(edition,'extras'), {recursive:true});
+  const op = { cleanupFolders: [folder], targets: [{ savePath: folder, files: [{name:'release/extras/00.mkv'}] }] };
+  const unrelated = path.join(folder,'my-notes.txt');
+  fs.writeFileSync(unrelated,'keep');
+  assert.equal(finishDeletion(op,[{save_path:edition}]).removedFolders,0);
+  assert.ok(fs.existsSync(edition));
+  assert.equal(finishDeletion(op,[]).removedFolders,0);
+  assert.equal(fs.existsSync(edition),false);
+  assert.ok(fs.existsSync(unrelated));
+  fs.unlinkSync(unrelated);
+  assert.equal(finishDeletion(op,[]).removedFolders,1);
+});

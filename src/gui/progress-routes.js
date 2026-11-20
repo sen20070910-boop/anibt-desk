@@ -14,7 +14,10 @@ import { randomBytes } from "node:crypto";
 import { validateReview } from "../reviews.js";
 import { loadState, statePath } from "../runner.js";
 import { buildProgress } from "../progress.js";
-import { recheckDeletionWarnings, watchedOperations } from "../watched-operations.js";
+import {
+  recheckDeletionWarnings,
+  watchedOperations,
+} from "../watched-operations.js";
 import { localDownloader } from "../history-actions.js";
 import { QbClient } from "../qb.js";
 import { submitAgain, resetCompletion } from "../reprocessing.js";
@@ -353,7 +356,8 @@ export function createProgressRoutes(ctx) {
           ? context.candidates.filter((c) => !c.ambiguous)
           : context.candidates;
       const chosen = options.find((c) => c.hash === body.hash) || options[0];
-      let targets = [], cleanupFolders = [];
+      let targets = [],
+        cleanupFolders = [];
       if (body.action === "unwatched" && !chosen)
         throw new Error("没有可提交的单集资源，请先到已有资源中查找版本。");
       if (body.action === "watched") {
@@ -362,7 +366,9 @@ export function createProgressRoutes(ctx) {
           await (qb.connectForDownload ? qb.connectForDownload() : qb.login());
           targets = await deletionManifest(context, qb, c);
           if (targets.length && body.episode === show.latest && show.bgmId) {
-            const completed = await ctx.completedAnime(show.bgmId, show.title).catch(() => null);
+            const completed = await ctx
+              .completedAnime(show.bgmId, show.title)
+              .catch(() => null);
             if (completed?.episodes === body.episode)
               cleanupFolders = await emptyAnimeFolders(show, targets, qb, c);
           }
@@ -574,16 +580,31 @@ export function createProgressRoutes(ctx) {
       } catch (e) {
         feedError = e.message;
       }
-      const qb = await ctx.qbInfo(false),
-        tracking = ctx.readTracking(),
+      const tracking = ctx.readTracking();
+      const hasDeletionWarning = (row) =>
+        row?.filesRemaining || row?.unknownFiles || row?.folderErrors;
+      const verifyFolders = Object.values(tracking).some(
+        (entry) =>
+          hasDeletionWarning(entry.showDeletion) ||
+          Object.values(entry.deletedEpisodes || {}).some(hasDeletionWarning),
+      );
+      const {
+          value: qb,
+          taskHashes,
+          taskFolders,
+        } = await ctx.qbSnapshot(verifyFolders),
         completed = ctx.readJsonFile(
           path.join(path.dirname(ctx.configFile), "data/completions.json"),
           { tasks: {} },
         );
       if (qb.connected && localDownloader(c)) {
         try {
-          recheckDeletionWarnings(tracking, watchedOperations(ctx.configFile).read,
-            qb.torrents.map(torrent => torrent.hash).filter(Boolean));
+          recheckDeletionWarnings(
+            tracking,
+            watchedOperations(ctx.configFile).read,
+            [...taskHashes],
+            taskFolders,
+          );
         } catch {
           // Preserve saved warnings if the evidence cannot be read.
         }

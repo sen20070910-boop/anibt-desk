@@ -14,7 +14,7 @@ const aliases = new Map([
   ["KO", "ko kor korean 韩语 韓語"],
   ["FR", "fr fre fra french 法语 法語"],
   ["DE", "de ger deu german 德语 德語"],
-  ["ES", "es spa spanish 西班牙语 西班牙語"],
+  ["ES", "es esp spa spanish 西班牙语 西班牙語"],
   ["PT", "pt por portuguese 葡萄牙语 葡萄牙語"],
   ["RU", "ru rus russian 俄语 俄語"],
   ["AR", "ar ara arabic 阿拉伯语 阿拉伯語"],
@@ -95,5 +95,30 @@ export function titleSubtitleCodes(text) {
       languages.add(code);
     }
   }
+  for (const region of text.matchAll(/[\[({]([^\])}\r\n]{1,150})[\])}]/g)) {
+    const ending = region[1].match(/^(.+?)[. _-]+(?:subs?|subtitles?)$/i);
+    if (ending) for (const code of subtitleList(ending[1])) languages.add(code);
+  }
+  if (/\bVOST[ ._-]*FR\b/i.test(text)) languages.add("FR");
   return [...languages];
+}
+
+export function subtitleList(text) {
+  const tokens =
+    text.match(
+      /(?:zh|cmn)[-_](?:hans|hant|cn|tw|sg|hk|mo)|[a-z\u3400-\u9fff0-9]+/gi,
+    ) || [];
+  const found = new Set();
+  for (const token of tokens) {
+    const code = subtitleLanguageCode(token);
+    if (!code) break;
+    found.add(code);
+  }
+  return [...found];
+}
+
+export function hasMultipleSubtitles(text) {
+  return /\b(?:multi(?:ple|lingual)?[ \t._-]+(?:subs|subtitles)\b|multi[ ._-]*subs\b)|多[国语國語]字幕/i.test(
+    text,
+  );
 }
