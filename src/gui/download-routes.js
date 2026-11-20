@@ -17,8 +17,14 @@ import {
 } from "../download-path.js";
 import { applyAnimeBindings } from "../anime-bindings.js";
 import { queueToken } from "../retries.js";
+import {
+  classifyDiscoveryFiles,
+  selectDiscoveryFiles,
+} from "../discovery-files.js";
 // Route boundary extracted without changing business decisions.
 export function createDownloadRoutes(ctx) {
+  const filePreviews = new Map();
+  const previewRequests = new Map();
   return async function handle({ route, req, res, body, u }) {
     if (route === "POST /api/history/clear") {
       ctx.requireIdle();
@@ -154,6 +160,7 @@ export function createDownloadRoutes(ctx) {
             savePath: row.savePath,
             organizeByAnime: !!row.animeTitle,
             paused,
+            requireExisting: row.selectiveDownload === true,
           },
         );
         const target =
@@ -482,7 +489,68 @@ export function createDownloadRoutes(ctx) {
       );
       return;
     }
+    if (route === "POST /api/discover/files") {
+      const resultId = String(body.resultId || "");
+      const now = Date.now();
+      for (const [id, entry] of filePreviews) {
+        if (now - entry.previewedAt > 600000) filePreviews.delete(id);
+      }
+      let pending = previewRequests.get(resultId);
+      if (!pending) {
+        if (previewRequests.size >= 3)
+          throw new Error("正在读取其他资源的文件，请稍候再试。");
+        pending = (async () => {
+          let item = await ctx.discovery.resolve(resultId);
+          const qb = ctx.deps.discoveryFileQb || new QbClient(ctx.getConfig());
+          try {
+            await (qb.connectForDownload
+              ? qb.connectForDownload()
+              : qb.login());
+            const files = classifyDiscoveryFiles(
+              await qb.discoveryFileManifest(item, {
+                captureTorrent: (torrentData) => {
+                  item = { ...item, torrentData };
+                },
+              }),
+            );
+            const previewId = randomBytes(16).toString("hex");
+            while (filePreviews.size >= 4)
+              filePreviews.delete(filePreviews.keys().next().value);
+            filePreviews.set(previewId, {
+              resultId,
+              item,
+              files,
+              previewedAt: Date.now(),
+            });
+            return { previewId, files };
+          } finally {
+            await qb.logout();
+          }
+        })().finally(() => previewRequests.delete(resultId));
+        previewRequests.set(resultId, pending);
+      }
+      ctx.json(res, 200, await pending);
+      return;
+    }
     if (route === "POST /api/discover/add") {
+      let preview, fileSelection;
+      if (body.fileSelection !== undefined) {
+        preview = filePreviews.get(body.fileSelection?.previewId);
+        if (
+          !preview ||
+          preview.resultId !== body.resultId ||
+          Date.now() - preview.previewedAt > 600000
+        ) {
+          throw new Error("文件清单已过期，请重新读取并勾选。");
+        }
+        fileSelection = {
+          files: preview.files,
+          priorities: selectDiscoveryFiles(
+            preview.files,
+            body.fileSelection.indices,
+          ),
+        };
+      }
       const result = await ctx.downloadMutation(
         "manual-add",
         async (qb, c) => {
@@ -490,7 +558,8 @@ export function createDownloadRoutes(ctx) {
             item = applyAnimeBindings(
               [
                 discoveryDownloadItem(
-                  await ctx.discovery.resolve(String(body.resultId || "")),
+                  preview?.item ||
+                    (await ctx.discovery.resolve(String(body.resultId || ""))),
                   association,
                 ),
               ],
@@ -551,13 +620,14 @@ export function createDownloadRoutes(ctx) {
             recovered = false;
           if (!existing) {
             try {
-              added = await qb.add(
-                item,
-                explicitPath
+              added = await qb.add(item, {
+                ...(explicitPath
                   ? { savePath: explicitPath, organizeByAnime: false }
-                  : { organizeByAnime: true },
-              );
+                  : { organizeByAnime: true }),
+                ...(fileSelection ? { fileSelection } : {}),
+              });
             } catch (error) {
+              if (fileSelection) throw error;
               if (await qb.has(item.infoHash)) {
                 existing = true;
                 recovered = true;
@@ -592,7 +662,10 @@ export function createDownloadRoutes(ctx) {
               old?.status || (!existing || recovered ? "added" : "existing"),
             hash: item.infoHash,
             kind: "manual",
-            paused: c.qb.paused,
+            paused: c.qb.paused || added?.startPending === true,
+            ...(!existing && fileSelection
+              ? { selectiveDownload: fileSelection.priorities.includes(0) }
+              : {}),
             ...(recovered ? { confirmationRecovered: true } : {}),
             ...(savePath ? { savePath } : {}),
           };
@@ -606,7 +679,13 @@ export function createDownloadRoutes(ctx) {
             { kind: "discovery-download" },
           );
           ctx.record("搜索资源已记入统一集数账本", "success");
-          return { ok: true, existing, hash: item.infoHash, savePath };
+          return {
+            ok: true,
+            existing,
+            hash: item.infoHash,
+            savePath,
+            startPending: added?.startPending === true,
+          };
         },
         ctx.deps.manualQb,
       );

@@ -2,6 +2,96 @@
 const sourceLabel = Object.fromEntries([...document.querySelectorAll('#page-discover [data-source]')]
   .map(button => [button.dataset.source, button.textContent.trim()]));
 const D={pathEdited:false,pathLoading:false,pathError:'',pathRequest:0,suppressPath:false,progressTarget:null,items:[],providers:[],sources:new Set(Object.keys(sourceLabel)),view:'releases',shown:24,loaded:false,busy:false,adding:false,selected:null,variants:[],present:new Set(),tasksRequest:0};
+const discoveryFiles = { request: 0, loading: false, preview: null, selected: new Set() };
+const discoveryFileLabels = {
+  video: '正片候选', subtitle: '字幕', font: '字幕字体', audio: '外挂音轨',
+  extra: '特典与附带文件', other: '其他文件',
+};
+
+function resetDiscoveryFiles() {
+  discoveryFiles.request++;
+  discoveryFiles.loading = false;
+  discoveryFiles.preview = null;
+  discoveryFiles.selected.clear();
+  $('discovery-files-read').textContent = '读取文件清单';
+  $('discovery-files-read').disabled = !D.selected?.downloadable;
+  $('discovery-files-controls').classList.add('hidden');
+  $('discovery-files-list').classList.add('hidden');
+  $('discovery-files-list').textContent = '';
+  text('discovery-files-summary', '读取后可跳过特典、扫图等附带文件。');
+}
+
+function updateDiscoveryFileSummary() {
+  const files = discoveryFiles.preview.files;
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  const chosen = files.filter(file => discoveryFiles.selected.has(file.index));
+  const size = chosen.reduce((sum, file) => sum + file.size, 0);
+  text('discovery-files-summary', '已选 ' + chosen.length + ' / ' + files.length + ' 个文件 · ' + bytes(size)
+    + ' / ' + bytes(total) + (chosen.length ? '' : ' · 请至少选择一个文件'));
+  updateDiscoverAddButton();
+}
+
+function updateDiscoveryFilePreset(mode) {
+  discoveryFiles.selected = new Set(discoveryFiles.preview.files
+    .filter(file => mode === 'all' || (mode === 'recommend' && file.recommended)).map(file => file.index));
+  for (const field of $('discovery-files-list').querySelectorAll('input')) {
+    field.checked = discoveryFiles.selected.has(Number(field.dataset.fileIndex));
+  }
+  updateDiscoveryFileSummary();
+}
+
+async function loadDiscoveryFiles() {
+  const item = D.selected;
+  if (!item?.downloadable || D.adding || discoveryFiles.loading) return;
+  resetDiscoveryFiles();
+  const request = discoveryFiles.request;
+  discoveryFiles.loading = true;
+  $('discovery-files-read').disabled = true;
+  text('discovery-files-summary', '正在读取文件清单。磁力链接可能需要等待做种者返回清单…');
+  try {
+    const preview = await api('discover/files', { resultId: item.resultId });
+    if (request !== discoveryFiles.request || !$('discovery-dialog').open) return;
+    discoveryFiles.preview = preview;
+    const groups = new Map();
+    for (const file of preview.files) {
+      if (!groups.has(file.kind)) groups.set(file.kind, []);
+      groups.get(file.kind).push(file);
+    }
+    $('discovery-files-list').innerHTML = Object.entries(discoveryFileLabels).map(([kind, label]) => {
+      const files = groups.get(kind);
+      if (!files) return '';
+      return '<section class="discovery-file-group"><h5>' + label + ' · ' + files.length + '</h5>'
+        + files.map(file => '<label class="discovery-file-row"><input type="checkbox" data-file-index="' + file.index
+          + '"><span>' + escape(file.path) + (file.language ? ' <small>· ' + escape(file.language) + '</small>' : '')
+          + '</span><small>' + escape(bytes(file.size)) + '</small></label>').join('') + '</section>';
+    }).join('');
+    $('discovery-files-list').classList.remove('hidden');
+    $('discovery-files-controls').classList.remove('hidden');
+    updateDiscoveryFilePreset('recommend');
+  } catch (error) {
+    if (request === discoveryFiles.request) text('discovery-files-summary', error.message);
+  } finally {
+    if (request === discoveryFiles.request) {
+      discoveryFiles.loading = false;
+      $('discovery-files-read').disabled = false;
+      $('discovery-files-read').textContent = '重新读取';
+      updateDiscoverAddButton();
+    }
+  }
+}
+
+for (const mode of ['recommend', 'all', 'clear']) {
+  $('discovery-files-' + mode).addEventListener('click', () => updateDiscoveryFilePreset(mode));
+}
+$('discovery-files-list').addEventListener('change', event => {
+  const index = Number(event.target.dataset.fileIndex);
+  if (!discoveryFiles.preview || !Number.isInteger(index)) return;
+  if (event.target.checked) discoveryFiles.selected.add(index);
+  else discoveryFiles.selected.delete(index);
+  updateDiscoveryFileSummary();
+});
+$('discovery-files-read').addEventListener('click', guarded(loadDiscoveryFiles));
+$('discovery-dialog').addEventListener('close', () => { discoveryFiles.request++; });
 function releaseLanguage(item){return item.languages.includes('CHS')?(item.languages.includes('CHT')?'简中 / 繁中':'简中'):item.languages.includes('CHT')?'繁中':item.languages.includes('EN')?'英文':'字幕未标注';}
 function isDiscoveredPresent(item) {
   return D.present.has(item.infoHash?.toLowerCase());
@@ -68,10 +158,10 @@ async function searchDiscover(force = false) {
     renderDiscover();
   }
 }
-function setSelectedVariant(id){D.selected=D.variants.find(i=>i.resultId===id)||D.variants[0];const item=D.selected;if(!item)return;$('discovery-acknowledge').checked=false;$('discovery-allow-alternate').checked=false;$('discovery-add-error').classList.add('hidden');const unknown=S.status?.config.filters.languages.includes('CHS')&&!item.languages.includes('CHS');$('discovery-subtitle-check').classList.toggle('hidden',!unknown);$('discovery-selected-meta').innerHTML=`<span class="pill ${item.languages.includes('CHS')?'green':'gray'}">${escape(releaseLanguage(item))}</span><span class="pill gray">${escape(item.resolution||'画质未标注')}</span><span class="pill gray">${escape(item.sizeText||'体积未提供')}</span><span class="pill gray">${item.seeders==null?'做种数未提供':'做种 '+item.seeders}</span>`;$('discovery-source-links').innerHTML=item.links.map(link=>`<a href="${escape(link.url)}" target="_blank" rel="noopener noreferrer">${escape(sourceLabel[link.source]||'来源')} 发布页 ↗</a>`).join('');updateDiscoverAddButton();if(!D.pathEdited&&!D.suppressPath)void updateDiscoveryPath();}
-function updateDiscoverAddButton(){const item=D.selected;if(!item)return;const subtitleNeeded=S.status?.config.filters.languages.includes('CHS')&&!item.languages.includes('CHS');const added=isDiscoveredPresent(item)&&!D.progressTarget;$('discovery-add').disabled=D.adding||D.pathLoading||!!D.pathError||added||!item.downloadable||(D.progressTarget&&!$('discovery-progress-ack').checked)||(subtitleNeeded&&!$('discovery-acknowledge').checked);$('discovery-add').innerHTML=icon(added?'check':'download')+(D.adding?'正在添加…':added?'已在下载列表':'添加到 qBittorrent');}
+function setSelectedVariant(id){D.selected=D.variants.find(i=>i.resultId===id)||D.variants[0];const item=D.selected;if(!item)return;resetDiscoveryFiles();$('discovery-acknowledge').checked=false;$('discovery-allow-alternate').checked=false;$('discovery-add-error').classList.add('hidden');const unknown=S.status?.config.filters.languages.includes('CHS')&&!item.languages.includes('CHS');$('discovery-subtitle-check').classList.toggle('hidden',!unknown);$('discovery-selected-meta').innerHTML=`<span class="pill ${item.languages.includes('CHS')?'green':'gray'}">${escape(releaseLanguage(item))}</span><span class="pill gray">${escape(item.resolution||'画质未标注')}</span><span class="pill gray">${escape(item.sizeText||'体积未提供')}</span><span class="pill gray">${item.seeders==null?'做种数未提供':'做种 '+item.seeders}</span>`;$('discovery-source-links').innerHTML=item.links.map(link=>`<a href="${escape(link.url)}" target="_blank" rel="noopener noreferrer">${escape(sourceLabel[link.source]||'来源')} 发布页 ↗</a>`).join('');updateDiscoverAddButton();if(!D.pathEdited&&!D.suppressPath)void updateDiscoveryPath();}
+function updateDiscoverAddButton(){const item=D.selected;if(!item)return;const subtitleNeeded=S.status?.config.filters.languages.includes('CHS')&&!item.languages.includes('CHS');const added=isDiscoveredPresent(item)&&!D.progressTarget;$('discovery-add').disabled=D.adding||D.pathLoading||!!D.pathError||added||!item.downloadable||discoveryFiles.loading||!discoveryFiles.preview||!discoveryFiles.selected.size||(D.progressTarget&&!$('discovery-progress-ack').checked)||(subtitleNeeded&&!$('discovery-acknowledge').checked);$('discovery-add').innerHTML=icon(added?'check':'download')+(D.adding?'正在添加…':added?'已在下载列表':!discoveryFiles.preview?'先读取文件清单':'下载选中文件');}
 function openDiscoverDetail(index){D.variants=D.renderedGroups[index]||[];if(!D.variants.length)return;D.pathEdited=false;D.pathLoading=false;D.pathError='';D.suppressPath=true;D.pathRequest++;D.selected=D.variants[0];const first=D.variants[0];text('discovery-detail-title',first.workTitle||first.title);text('discovery-detail-subtitle',D.variants.length>1?`找到 ${D.variants.length} 个发行版本，请选择需要的画质、字幕与压制组。`:first.title);$('discovery-version-group').innerHTML='<option value="">全部发布组</option>'+[...new Set(D.variants.map(i=>i.groupName||'未标注发布组'))].sort((a,b)=>a.localeCompare(b,'zh-CN')).map(g=>`<option value="${escape(g)}">${escape(g)}</option>`).join('');renderVersionGroups();$('discovery-save-path').value='';$('discovery-save-path').placeholder='正在计算作品子目录…';text('discovery-path-hint','');D.suppressPath=false;$('discovery-paused').checked=!!S.status?.config.qb.paused;$('discovery-progress-check').classList.toggle('hidden',!D.progressTarget);$('discovery-progress-ack').checked=false;text('discovery-progress-label',D.progressTarget?`我已核对这份资源对应《${D.progressTarget.title}》第 ${D.progressTarget.episode} 集，将关联到追番进度。`:'');setSelectedVariant(first.resultId);$('discovery-dialog').showModal();void refreshDiscoveryTasks(true);}
-async function addDiscovered(){if(D.adding||D.pathLoading||D.pathError||!D.selected)return;const selected=D.selected;if(isDiscoveredPresent(selected)&&!D.progressTarget)return;D.adding=true;updateDiscoverAddButton();$('discovery-add-error').classList.add('hidden');try{await requireDiscoveryFolders();const result=await api('discover/add',{...(D.progressTarget&&$('discovery-progress-ack').checked?{association:D.progressTarget}:{}),resultId:selected.resultId,savePath:D.pathEdited?$('discovery-save-path').value.trim():'',paused:$('discovery-paused').checked,acknowledgeSubtitle:$('discovery-acknowledge').checked,allowAlternate:$('discovery-allow-alternate').checked});D.tasksRequest++;selected.infoHash=result.hash;D.present.add(result.hash);D.progressTarget=null;$('discovery-progress-check').classList.add('hidden');toast(result.existing?'qBittorrent 已存在这个任务，保留原保存位置。':'已添加到 qBittorrent'+(result.savePath?' · '+result.savePath:''));await Promise.allSettled([loadStatus(),loadQb(true),refreshDiscoveryTasks(true)]);renderDiscover();}catch(e){text('discovery-add-error',e.message);$('discovery-add-error').classList.remove('hidden');}finally{D.adding=false;updateDiscoverAddButton();}}
+async function addDiscovered(){if(D.adding||D.pathLoading||D.pathError||!D.selected||discoveryFiles.loading||!discoveryFiles.preview||!discoveryFiles.selected.size)return;const selected=D.selected;if(isDiscoveredPresent(selected)&&!D.progressTarget)return;D.adding=true;const fileSelection={previewId:discoveryFiles.preview.previewId,indices:[...discoveryFiles.selected]};updateDiscoverAddButton();$('discovery-add-error').classList.add('hidden');try{await requireDiscoveryFolders();const result=await api('discover/add',{...(D.progressTarget&&$('discovery-progress-ack').checked?{association:D.progressTarget}:{}),resultId:selected.resultId,fileSelection,savePath:D.pathEdited?$('discovery-save-path').value.trim():'',paused:$('discovery-paused').checked,acknowledgeSubtitle:$('discovery-acknowledge').checked,allowAlternate:$('discovery-allow-alternate').checked});D.tasksRequest++;selected.infoHash=result.hash;D.present.add(result.hash);D.progressTarget=null;$('discovery-progress-check').classList.add('hidden');toast(result.startPending?'文件选择已应用，任务启动待确认，请到 qB 查看。':result.existing?'qBittorrent 已存在这个任务，保留原保存位置。':'已添加到 qBittorrent'+(result.savePath?' · '+result.savePath:''));await Promise.allSettled([loadStatus(),loadQb(true),refreshDiscoveryTasks(true)]);renderDiscover();}catch(e){text('discovery-add-error',e.message);$('discovery-add-error').classList.remove('hidden');}finally{D.adding=false;updateDiscoverAddButton();}}
 window.AniBTDiscover={find:async(query,target=null)=>{D.progressTarget=target;D.loaded=true;$('discovery-query').value=query;changePage('discover');await searchDiscover();},refresh:()=>searchDiscover(true),enter:()=>{if(!D.loaded&&!D.busy)guarded(()=>searchDiscover())();else if(D.loaded)void refreshDiscoveryTasks(true);}};
 $('discovery-search-form').addEventListener('submit',guarded(async e=>{e.preventDefault();await searchDiscover();}));
 for(const button of document.querySelectorAll('[data-source]'))button.addEventListener('click',()=>{const source=button.dataset.source;if(D.sources.has(source))D.sources.delete(source);else D.sources.add(source);renderSourceSelection();});

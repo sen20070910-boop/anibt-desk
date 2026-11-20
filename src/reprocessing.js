@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWrite } from './config.js';
-export async function submitAgain(qb,item,{savePath,organizeByAnime=false,paused=false}={}){
+export async function submitAgain(qb,item,{savePath,organizeByAnime=false,paused=false,requireExisting=false}={}){
   const existing=(await qb.list()).find(t=>t.hash?.toLowerCase()===item.infoHash?.toLowerCase());
   if(existing){
     const modern=Number(String(qb.version||'5').match(/\d+/)?.[0])>=5;
@@ -11,6 +11,7 @@ export async function submitAgain(qb,item,{savePath,organizeByAnime=false,paused
     await qb.request('torrents/recheck',new URLSearchParams({hashes:item.infoHash}));
     return{mode:'recheck',savePath:existing.save_path||savePath||''};
   }
+  if(requireExisting)throw new Error('这项任务原来只下载了部分文件。请在「发现资源」找到同一版本，重新勾选需要的文件。');
   await qb.ensureCategory();const result=await qb.add(item,{stopped:paused,...(savePath?{savePath}:{organizeByAnime})});
   return{mode:'added',savePath:result?.savePath||savePath||''};
 }

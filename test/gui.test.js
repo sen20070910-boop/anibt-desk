@@ -200,6 +200,44 @@ test('removed themes fall back to classic without losing brightness or network s
 test('manual search add is confirmed in qB, recorded once and does not modify automatic filters',async t=>{let adds=0;const hashes=new Set();const manualQb={login:async()=>{},ensureCategory:async()=>{},has:async h=>hashes.has(h),add:async i=>{adds++;hashes.add(i.infoHash);},logout:async()=>{}};const discovery={search:async()=>({items:[]}),resolve:async id=>{if(id!=='valid')throw new Error('expired');return{...item,sources:['nyaa']};}};const f=await fixture(t,{discovery,manualQb});const before=fs.readFileSync(f.configFile,'utf8');let r=await f.request('discover/add',{resultId:'valid',paused:true});assert.equal(r.status,200);assert.equal(r.data.existing,false);assert.equal(adds,1);r=await f.request('discover/add',{resultId:'valid'});assert.equal(r.data.existing,true);assert.equal(adds,1);const history=(await f.request('status')).data.state.history;assert.equal(history.length,1);assert.equal(history[0].kind,'manual');assert.equal(fs.readFileSync(f.configFile,'utf8'),before);assert.equal((await f.request('discover/add',{resultId:'https://evil.test/a'})).status,400);});
 test('unknown simplified subtitle metadata needs an explicit per-download acknowledgement',async t=>{let adds=0;const manualQb={login:async()=>{},ensureCategory:async()=>{},has:async()=>false,add:async()=>{adds++;},logout:async()=>{}};const discovery={resolve:async()=>({...item,languages:[],sources:['vcb']})};const f=await fixture(t,{discovery,manualQb});assert.equal((await f.request('discover/add',{resultId:'test'})).status,400);assert.equal(adds,0);assert.equal((await f.request('discover/add',{resultId:'test',acknowledgeSubtitle:true})).status,200);assert.equal(adds,1);});
 
+test('selective discovery validates the preview and never converts an unverified add to success', async t => {
+  const adds = [];
+  let shouldFail = false;
+  const discoveryFileQb = {
+    login: async () => {},
+    logout: async () => {},
+    discoveryFileManifest: async () => [
+      { path: 'Movie.mkv', size: 4500 },
+      { path: 'SPs/Bonus.mkv', size: 1000 },
+    ],
+  };
+  const manualQb = {
+    login: async () => {}, logout: async () => {}, ensureCategory: async () => {}, has: async () => false,
+    add: async (resource, options) => {
+      adds.push(options.fileSelection.priorities);
+      if (shouldFail) throw new Error('优先级未确认');
+      return { savePath: 'D:/Test' };
+    },
+  };
+  const f = await fixture(t, { discoveryFileQb, manualQb, discovery: { resolve: async () => item } });
+  const preview = await f.request('discover/files', { resultId: 'movie' });
+  assert.equal(preview.status, 200);
+  assert.deepEqual(preview.data.files.map(row => row.recommended), [true, false]);
+  assert.equal(adds.length, 0);
+  const fileSelection = { previewId: preview.data.previewId, indices: [0] };
+  assert.equal((await f.request('discover/add', { resultId: 'another', fileSelection })).status, 400);
+  assert.equal((await f.request('discover/add', { resultId: 'movie', fileSelection: { ...fileSelection, indices: [] } })).status, 400);
+  assert.equal(adds.length, 0);
+  shouldFail = true;
+  assert.equal((await f.request('discover/add', { resultId: 'movie', fileSelection })).status, 400);
+  assert.equal((await f.request('status')).data.state.history.length, 0);
+  shouldFail = false;
+  assert.equal((await f.request('discover/add', { resultId: 'movie', fileSelection })).status, 200);
+  assert.deepEqual(adds, [[1, 0], [1, 0]]);
+  const manual = JSON.parse(fs.readFileSync(path.join(f.dir, 'data/manual-downloads.json')));
+  assert.equal(manual[item.infoHash].selectiveDownload, true);
+});
+
 test('discovery reflects live qB tasks and permits the same seed after deletion with history intact', async t => {
   const foreign = 'b'.repeat(40);
   const hashes = new Set([foreign]);

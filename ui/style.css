@@ -190,3 +190,32 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 .discovery-alias-tools .inline-check {font-size: 12px;}
 .discovery-alias-tools small {font-size: 12px;overflow-wrap: anywhere;}
 
+.discovery-file-section {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.discovery-file-header, .discovery-file-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.discovery-file-header h4, #discovery-files-summary {margin: 0;}
+#discovery-files-summary {margin-top: 8px; line-height: 1.5;}
+.discovery-file-controls {justify-content: flex-start; margin: 8px 0;}
+.discovery-file-list {max-height: 16rem; overflow: auto; overscroll-behavior: contain;}
+.discovery-file-group h5 {margin: 10px 0 6px; color: var(--muted);}
+.discovery-file-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.discovery-file-row small {color: var(--muted);}
+
