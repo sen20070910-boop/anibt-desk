@@ -236,6 +236,16 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 
 .progress-show-info{display:flex;align-items:center;gap:16px;min-width:0}
 .progress-show-info h3{overflow-wrap:anywhere}
+.progress-direct-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 14px;
+}
+@media (max-width: 520px) {
+  .progress-direct-heading { flex-wrap: wrap; }
+  .progress-direct-actions { margin-inline-start: auto; }
+}
 .progress-cover.watched-library-cover{width:68px;height:98px}
 .progress-direct-list{margin:16px 0}
 .progress-direct-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
