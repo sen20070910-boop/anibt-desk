@@ -7,6 +7,7 @@ import { normalizeHash, magnetHash, torrentInfoHash } from './torrent.js';
 import { createSourceNetwork, sourceUrl } from './source-network.js';
 import { hasMultipleSubtitles, titleSubtitleCodes } from './subtitle-language.js';
 import { nyaaSubtitlePage, readNyaaSubtitleDetails } from './nyaa-subtitles.js';
+import { sourceLinks as historyLinks } from './history-actions.js';
 
 export const sourceNames = {
   anibt: 'AniBT',
@@ -321,6 +322,28 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     if(!item.infoHash||(!item.magnet&&!item.torrentData))throw new Error('没有可直接下载的有效种子。');return item;
   }
   function peek(id){const entry=results.get(id);if(!entry||now()-entry.at>1800000)throw new Error('这条搜索结果已过期，请重新搜索。');return{...entry.item};}
+  function reopen(row) {
+    const infoHash = String(row.hash || '').toLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(infoHash)) throw new Error('原记录缺少有效的种子标识。');
+    const links = historyLinks(row).flatMap(link => {
+      const host = new URL(link.url).hostname;
+      const source = host === 'nyaa.si' ? 'nyaa' : host.endsWith('dmhy.org') ? 'dmhy'
+        : host.endsWith('animes.garden') ? 'garden' : host.endsWith('vcb-s.com') ? 'vcb'
+        : host.startsWith('mikan') ? 'mikan' : 'anibt';
+      return [{ source, url: link.url }];
+    });
+    const pageUrl = nyaaSubtitlePage({ links });
+    const title = row.title || row.animeTitle;
+    const metadata = inferRelease(title);
+    const tracker = pageUrl ? '&tr=https%3A%2F%2Fnyaa.tracker.wf%2Fannounce' : '';
+    return remember({
+      ...metadata, title, workTitle: row.animeTitle || metadata.workTitle, kind: 'release', infoHash,
+      animeTitle: row.animeTitle, bgmId: row.bgmId, episode: row.episode, version: row.version,
+      pageUrl, torrentUrl: pageUrl ? pageUrl.replace('/view/','/download/') + '.torrent' : '',
+      magnet: 'magnet:?xt=urn:btih:' + infoHash + tracker,
+      sources: [...new Set(links.map(link => link.source))], links,
+    });
+  }
   let activeSubtitleBatches = 0;
   async function subtitleDetails(ids) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 12 ||
@@ -348,5 +371,5 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       return details;
     } finally { activeSubtitleBatches--; }
   }
-  return{search,resolve,peek,subtitleDetails,close:network.close};
+  return{search,resolve,peek,reopen,subtitleDetails,close:network.close};
 }

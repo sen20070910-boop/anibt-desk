@@ -18,8 +18,9 @@ export function buildProgress({items=[],state,manual={},completed={},torrents=[]
   tracking=normalizeTracking(tracking);
   const history=[
     ...Object.values(state.done),
-    ...Object.values(manual).map(job => ({
+    ...Object.entries(manual).map(([recordId, job]) => ({
       ...job,
+      recordId,
       direct: isDirectDiscoveryRecord(job),
     })),
   ];
@@ -63,7 +64,7 @@ export function buildProgress({items=[],state,manual={},completed={},torrents=[]
       if(!directResources.has(show.key))directResources.set(show.key,[]);
       const hash=String(job.hash||'').toLowerCase(), torrent=byHash.get(hash);
       const status=torrent?.progress>=1?'已完成':torrent?'已提交到 qB':completed[hash]?.completed?'曾下载完成':'已记录';
-      directResources.get(show.key).push({hash,title:job.title,status,progress:torrent?.progress??null});
+      directResources.get(show.key).push({recordId:job.recordId,hash,title:job.title,status,progress:torrent?.progress??null});
       if(!feedByHash.has(hash))continue;
     }else subscribed.add(show.key);
     put(info,job);

@@ -61,7 +61,7 @@ export function hasSubtitleExtension(name) {
   return /\.(?:ass|ssa|srt|vtt|sup|sub|idx)$/i.test(name);
 }
 
-export function sidecarLanguage(name) {
+export function sidecarLanguageInfo(name) {
   const stem = String(name)
     .replace(/^.*[\\/]/, "")
     .replace(/\.[^.]+$/, "")
@@ -70,6 +70,13 @@ export function sidecarLanguage(name) {
   const suffix = stem.match(
     /(?:^|[\s._[(\]-])((?:zh|cmn)[-_](?:hans|hant|cn|tw|sg|hk|mo)(?:[-_][a-z]{2})?|[\w\u3400-\u9fff]+)[\])]?$/i,
   )?.[1];
+  const paired = suffix?.match(
+    /^(?:(?:jp|jpn|ja)(sc|chs|tc|cht)|(sc|chs|tc|cht)(?:jp|jpn|ja))$/i,
+  );
+  if (paired) {
+    const code = subtitleLanguageCode(paired[1] || paired[2]);
+    return { code, label: subtitleLanguageName(code) + " / 日文" };
+  }
   const explicitChinese =
     stem.match(
       /简体中文|簡體中文|繁体中文|繁體中文|简[体中]|簡[體中]|繁[体體中]/,
@@ -78,8 +85,11 @@ export function sidecarLanguage(name) {
   const boundedCode = stem.match(
     /(?:^|[.\s_[(\]-])(chs|cht|sc|tc|gb(?:2312)?|big5)(?=[.\s_\])\-])/i,
   )?.[1];
-  return subtitleLanguageCode(explicitChinese || boundedCode || suffix);
+  const code = subtitleLanguageCode(explicitChinese || boundedCode || suffix);
+  return { code, label: subtitleLanguageName(code) };
 }
+
+export const sidecarLanguage = (name) => sidecarLanguageInfo(name).code;
 
 export function titleSubtitleCodes(text) {
   const languages = new Set();

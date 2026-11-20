@@ -11,6 +11,7 @@ import { matches, matchingAnimeRule, norm } from "../feed.js";
 import { randomBytes } from "node:crypto";
 import { catchupRecommendations, resourceDownloadConfig } from "../catchup.js";
 import { episodeRecorded } from "../episode-dedupe.js";
+import { isDirectDiscoveryRecord } from "../progress.js";
 import {
   animeFolderName,
   animeDownloadPath,
@@ -468,6 +469,23 @@ export function createDownloadRoutes(ctx) {
       });
       return;
     }
+    if (route === "POST /api/discover/reopen") {
+      if (typeof body.key !== "string")
+        throw new Error("请选择要再次下载的版本。");
+      const match = Object.entries(ctx.readManual()).find(
+        ([id, row]) =>
+          isDirectDiscoveryRecord(row) &&
+          ctx.historyKey({ id, ...row }) === body.key,
+      );
+      if (!match || !/^[a-f0-9]{40}$/i.test(match[1].hash || ""))
+        throw new Error("原下载记录已变化或缺少种子标识，请刷新进度。");
+      const row = match[1];
+      ctx.json(res, 200, {
+        item: ctx.discovery.reopen(row),
+        savePath: row.savePath || "",
+      });
+      return;
+    }
     if (route === "POST /api/discover/path") {
       const c = ctx.getConfig(),
         raw = ctx.discovery.peek
@@ -688,6 +706,7 @@ export function createDownloadRoutes(ctx) {
             hash: item.infoHash,
             kind: "manual",
             origin: body.association ? "subscription" : "discovery",
+            ledgerId: item.id || item.infoHash,
             paused: c.qb.paused || added?.startPending === true,
             ...(!existing && fileSelection
               ? { selectiveDownload: fileSelection.priorities.includes(0) }

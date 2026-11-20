@@ -32,9 +32,57 @@
      if(meta?.cover&&cover&&!cover.querySelector('img'))cover.innerHTML=showCover(show,meta);
    }
  }
+ const resetDialog = $("manual-reset-dialog");
+ let resetPlan = null, resetRequest = 0, resetting = false;
+ async function openManualReset(show) {
+   if (!show?.direct || resetting) return;
+   const request = ++resetRequest;
+   resetPlan = null;
+   text("manual-reset-name", show.title);
+   text("manual-reset-scope", "正在核对这部作品的记录…");
+   $("manual-reset-error").classList.add("hidden");
+   $("manual-reset-confirm").disabled = true;
+   if (!resetDialog.open) resetDialog.showModal();
+   try {
+     const preview = await api("progress/manual/reset/preview", { key: show.key });
+     if (request !== resetRequest || !resetDialog.open) return;
+     resetPlan = { key: show.key, version: preview.version };
+     text("manual-reset-name", preview.title);
+     text("manual-reset-scope", `将清除这部作品的 ${preview.records} 条手动下载记录，以及本机观看进度、评分、评价和草稿。相关去重与完成通知也会清除。操作仅限工具内记录，删除后无法撤销。`);
+     $("manual-reset-confirm").disabled = false;
+   } catch (error) {
+     if (request !== resetRequest || !resetDialog.open) return;
+     text("manual-reset-scope", error.message);
+   }
+ }
+ resetDialog.addEventListener("close", () => { resetRequest++; resetPlan = null; });
+ resetDialog.addEventListener("cancel", event => { if (resetting) event.preventDefault(); });
+ $("manual-reset-confirm").addEventListener("click", guarded(async () => {
+   if (!resetPlan || resetting) return;
+   resetting = true;
+   const buttons = [...resetDialog.querySelectorAll("button")];
+   buttons.forEach(button => { button.disabled = true; });
+   $("manual-reset-error").classList.add("hidden");
+   try {
+     await api("progress/manual/reset", { ...resetPlan, confirm: true });
+   } catch (error) {
+     text("manual-reset-error", error.message);
+     $("manual-reset-error").classList.remove("hidden");
+     $("manual-reset-confirm").disabled = true;
+     return;
+   } finally {
+     resetting = false;
+     buttons.filter(button => button.id !== "manual-reset-confirm").forEach(button => { button.disabled = false; });
+   }
+   resetDialog.close();
+   toast("已删除这部作品的工具记录。");
+   await loadStatus();
+   if ($("watched-library-dialog").open) await loadWatched();
+   else await load();
+ }));
  function directCard(show,i){
-   const items=show.resources.map(row=>`<div class="progress-direct-row"><div><strong>${escape(row.title)}</strong><small>${escape(row.status)}${row.progress!==null&&row.progress<1?' · '+Math.round(row.progress*100)+'%':''}</small></div>${/^[a-f0-9]{40}$/.test(row.hash)?`<button type="button" class="text-button" data-qb-details="${escape(row.hash)}">任务详情</button>`:''}</div>`).join('');
-   return `<article class="panel progress-show" data-progress-show="${i}"><div class="progress-show-heading"><div class="progress-show-info"><div class="progress-cover watched-library-cover" data-progress-cover>${showCover(show,progressMetadata.get(show.key))}</div><div><h3>${escape(show.title)}</h3><p class="muted">手动下载 · ${show.resources.length} 份资源</p></div></div>${show.direct?`<button type="button" class="text-button" data-progress-archive="${i}">${show.archived?'取消归档':'归档作品'}</button>`:''}</div><div class="progress-direct-list">${items}</div>${show.direct?`<div class="progress-edit">${show.watchSessions?.length?`<button type="button" class="text-button" data-progress-review="${i}">观看回顾</button>`:''}<button type="button" class="button secondary" data-progress-finish="${i}">已全部看完</button></div>`:''}</article>`;
+   const items=show.resources.map(row=>`<div class="progress-direct-row"><div><strong>${escape(row.title)}</strong><small>${escape(row.status)}${row.progress!==null&&row.progress<1?' · '+Math.round(row.progress*100)+'%':''}</small></div>${/^[a-f0-9]{40}$/.test(row.hash)?`<button type="button" class="text-button" data-qb-details="${escape(row.hash)}">任务详情</button>`:''}${row.reDownloadKey&&row.progress===null?`<button type="button" class="text-button" data-progress-redownload="${escape(row.reDownloadKey)}">再次下载</button>`:''}</div>`).join('');
+   return `<article class="panel progress-show" data-progress-show="${i}"><div class="progress-show-heading"><div class="progress-show-info"><div class="progress-cover watched-library-cover" data-progress-cover>${showCover(show,progressMetadata.get(show.key))}</div><div><h3>${escape(show.title)}</h3><p class="muted">手动下载 · ${show.resources.length} 份资源</p></div></div>${show.direct?`<button type="button" class="text-button" data-progress-archive="${i}">${show.archived?'取消归档':'归档作品'}</button>`:''}</div><div class="progress-direct-list">${items}</div>${show.direct?`<div class="progress-edit">${show.watchSessions?.length?`<button type="button" class="text-button" data-progress-review="${i}">观看回顾</button>`:''}<button type="button" class="button secondary" data-progress-finish="${i}">已全部看完</button><button type="button" class="text-button danger-quiet" data-progress-manual-reset="${i}">删除记录</button></div>`:''}</article>`;
  }
  function render(){
   const origin=$('progress-origin').value;
@@ -47,7 +95,10 @@
  $('progress-results').addEventListener('input',()=>W.dirty=true);
  $('progress-refresh').addEventListener('click',guarded(load));$('progress-view').addEventListener('change',render);$('progress-origin').addEventListener('change',render);$('progress-retry').addEventListener('click',guarded(async()=>{await doAction('check');await load();}));
  $('progress-results').addEventListener('click',guarded(async e=>{
-  let b;if(b=e.target.closest('[data-progress-review]'))return window.AniBTReviews.open(W.shows[Number(b.dataset.progressReview)]);if(b=e.target.closest('[data-progress-finish]'))return window.AniBTEpisodeActions.openAll(W.shows[Number(b.dataset.progressFinish)]);if(b=e.target.closest('[data-episode-show]'))return window.AniBTEpisodeActions.open(W.shows[Number(b.dataset.episodeShow)],Number(b.dataset.episodeNumber));if(b=e.target.closest('[data-progress-save]'))return save(Number(b.dataset.progressSave));
+  let b;
+  if(b=e.target.closest('[data-progress-manual-reset]'))return openManualReset(W.shows[Number(b.dataset.progressManualReset)]);
+  if(b=e.target.closest('[data-progress-redownload]')){b.disabled=true;try{return await window.AniBTDiscover.reopen(b.dataset.progressRedownload);}finally{b.disabled=false;}}
+  if(b=e.target.closest('[data-progress-review]'))return window.AniBTReviews.open(W.shows[Number(b.dataset.progressReview)]);if(b=e.target.closest('[data-progress-finish]'))return window.AniBTEpisodeActions.openAll(W.shows[Number(b.dataset.progressFinish)]);if(b=e.target.closest('[data-episode-show]'))return window.AniBTEpisodeActions.open(W.shows[Number(b.dataset.episodeShow)],Number(b.dataset.episodeNumber));if(b=e.target.closest('[data-progress-save]'))return save(Number(b.dataset.progressSave));
   if(b=e.target.closest('[data-progress-archive]')){const i=Number(b.dataset.progressArchive);return save(i,!W.shows[i].archived);}
   if(b=e.target.closest('[data-progress-settings]')){const s=W.shows[Number(b.dataset.progressSettings)];return openAnimeRule({title:s.title,bgmId:s.bgmId,items:[{folderName:s.title}]});}
   if(b=e.target.closest('[data-gap-show]')){const s=W.shows[Number(b.dataset.gapShow)];return window.AniBTDiscover.find(s.title.slice(0,32)+' '+String(b.dataset.gapEpisode).padStart(2,'0'),{title:s.title,bgmId:s.bgmId,episode:String(b.dataset.gapEpisode)});}
@@ -64,12 +115,12 @@
  let watchedShows=[],watchedMetadata=new Map();
  function renderWatched(){
   const query=norm($('watched-library-search').value),filter=$('watched-library-filter').value,sort=$('watched-library-sort').value;const visible=watchedShows.filter(s=>(!query||norm(s.title+' '+(s.personalReview?.text||'')+' '+(s.watchSessions||[]).map(w=>w.personalReview?.text||'').join(' ')).includes(query))&&(filter==='all'||filter==='unreviewed'&&(!s.personalReview||s.personalReview.score===null&&!s.personalReview.text.trim())||filter==='rewatch'&&s.personalReview?.rewatch===true||filter==='scored'&&s.personalReview?.score!==null&&s.personalReview?.score!==undefined));visible.sort((a,b)=>sort==='score'?(b.personalReview?.score??-1)-(a.personalReview?.score??-1):sort==='website'?(watchedMetadata.get(b.key)?.averageScore??-1)-(watchedMetadata.get(a.key)?.averageScore??-1):sort==='title'?a.title.localeCompare(b.title,'zh-CN'):sort==='first'?String(a.watchSessions?.[0]?.completedAt||a.completedAt).localeCompare(String(b.watchSessions?.[0]?.completedAt||b.completedAt)):String(b.completedAt).localeCompare(String(a.completedAt)));text('watched-library-count','显示 '+visible.length+' / '+watchedShows.length+' 部');
-  $('watched-library-results').innerHTML=visible.length?visible.map(show=>{const i=watchedShows.indexOf(show);const meta=watchedMetadata.get(show.key)||{},warning=show.showDeletion?.filesRemaining||show.showDeletion?.unknownFiles||show.showDeletion?.folderErrors;return `<article class="watched-library-card"><div class="watched-library-cover">${meta.cover?`<img data-cover-url="${escape(meta.cover)}" data-cover-title="${escape(show.title)}" data-cover-bgm="${escape(show.bgmId||'')}" alt="" loading="lazy">`:`<span>${escape(show.title.slice(0,12))}</span>`}</div><div><h3><button type="button" class="watched-review-title" data-watched-review="${i}">${escape(show.title)}</button></h3><p class="muted">第 ${(show.watchSessions?.length||0)+1} 次看完 · ${date(show.completedAt)}</p><p>${meta.format==='MOVIE'?'电影':show.direct?'手动下载 · '+show.resources.length+' 份资源':meta.episodes?'共 '+meta.episodes+' 集':'最新已知第 '+(show.latest||'?')+' 集'} · ${typeof meta.averageScore==='number'?'网站评分 '+meta.averageScore+' / 100':'暂无评分'}</p><span class="badge ${show.fullyWatched?'success':''}">${show.fullyWatched?'已全部看完':'有新集数待看'}</span>${warning?'<p class="muted">部分文件或目录仍待手动核对</p>':''}<div class="personal-review-summary"><strong>${show.personalReview?.score!==null&&show.personalReview?.score!==undefined?'我的评分：'+show.personalReview.score+' / 10':'我的评分：暂未评分'}</strong><p>${escape(show.personalReview?.text?.slice(0,80)||'还没有写下观后评价')}</p></div><div class="watched-library-tools"><button type="button" class="text-button" data-watched-review="${i}">我的评价</button><button type="button" class="text-button" data-watched-resources="${i}">查看资源</button><button type="button" class="text-button" data-watched-rewatch="${i}">开始重看</button><button type="button" class="text-button" data-watched-restore="${i}">移回在追</button></div></div></article>`;}).join(''):empty(watchedShows.length?'当前条件没有匹配的番剧':'还没有收录看完的番剧',watchedShows.length?'可以清空搜索或切换筛选条件。':'在追番进度中点击“已全部看完”，二次确认后会收录到这里。','library');
+  $('watched-library-results').innerHTML=visible.length?visible.map(show=>{const i=watchedShows.indexOf(show);const meta=watchedMetadata.get(show.key)||{},warning=show.showDeletion?.filesRemaining||show.showDeletion?.unknownFiles||show.showDeletion?.folderErrors;return `<article class="watched-library-card"><div class="watched-library-cover">${meta.cover?`<img data-cover-url="${escape(meta.cover)}" data-cover-title="${escape(show.title)}" data-cover-bgm="${escape(show.bgmId||'')}" alt="" loading="lazy">`:`<span>${escape(show.title.slice(0,12))}</span>`}</div><div><h3><button type="button" class="watched-review-title" data-watched-review="${i}">${escape(show.title)}</button></h3><p class="muted">第 ${(show.watchSessions?.length||0)+1} 次看完 · ${date(show.completedAt)}</p><p>${meta.format==='MOVIE'?'电影':show.direct?'手动下载 · '+show.resources.length+' 份资源':meta.episodes?'共 '+meta.episodes+' 集':'最新已知第 '+(show.latest||'?')+' 集'} · ${typeof meta.averageScore==='number'?'网站评分 '+meta.averageScore+' / 100':'暂无评分'}</p><span class="badge ${show.fullyWatched?'success':''}">${show.fullyWatched?'已全部看完':'有新集数待看'}</span>${warning?'<p class="muted">部分文件或目录仍待手动核对</p>':''}<div class="personal-review-summary"><strong>${show.personalReview?.score!==null&&show.personalReview?.score!==undefined?'我的评分：'+show.personalReview.score+' / 10':'我的评分：暂未评分'}</strong><p>${escape(show.personalReview?.text?.slice(0,80)||'还没有写下观后评价')}</p></div><div class="watched-library-tools"><button type="button" class="text-button" data-watched-review="${i}">我的评价</button><button type="button" class="text-button" data-watched-resources="${i}">查看资源</button><button type="button" class="text-button" data-watched-rewatch="${i}">开始重看</button><button type="button" class="text-button" data-watched-restore="${i}">${show.direct?'移回进度':'移回在追'}</button>${show.direct?`<button type="button" class="text-button danger-quiet" data-watched-manual-reset="${i}">删除记录</button>`:''}</div></div></article>`;}).join(''):empty(watchedShows.length?'当前条件没有匹配的番剧':'还没有收录看完的番剧',watchedShows.length?'可以清空搜索或切换筛选条件。':'在追番进度中点击“已全部看完”，二次确认后会收录到这里。','library');
  }
  async function loadWatched(){const result=await api('progress');watchedShows=result.shows.filter(s=>s.completedAt).sort((a,b)=>String(b.completedAt).localeCompare(String(a.completedAt)));renderWatched();await loadShowMetadata(watchedShows,watchedMetadata,()=>{if($('watched-library-dialog').open)renderWatched();});}
  for(const id of ['watched-library-search','watched-library-filter','watched-library-sort'])$(id).addEventListener(id==='watched-library-search'?'input':'change',renderWatched);
  $('open-watched-library').addEventListener('click',guarded(async()=>{$('watched-library-dialog').showModal();$('watched-library-results').textContent='正在读取看过的番剧…';try{await loadWatched();}catch(e){$('watched-library-results').textContent=e.message;}}));
- $('watched-library-results').addEventListener('click',guarded(async e=>{const rewatch=e.target.closest('[data-watched-rewatch]');if(rewatch)return window.AniBTLibraryTools.rewatch(watchedShows[Number(rewatch.dataset.watchedRewatch)]);const review=e.target.closest('[data-watched-review]');if(review)return window.AniBTReviews.open(watchedShows[Number(review.dataset.watchedReview)]);const restore=e.target.closest('[data-watched-restore]'),resources=e.target.closest('[data-watched-resources]');if(resources){const show=watchedShows[Number(resources.dataset.watchedResources)];$('watched-library-dialog').close();if(show.direct)return window.AniBTDiscover.find(show.title.slice(0,100));return window.AniBTResources.open({...show,...watchedMetadata.get(show.key)});}if(restore){const show=watchedShows[Number(restore.dataset.watchedRestore)];restore.disabled=true;try{await api('progress/show/restore',{key:show.key});await loadWatched();await loadFeed();toast('已移回在追，观看进度和已删除文件状态保留；不会自动补下载。');}finally{restore.disabled=false;}}}));
+ $('watched-library-results').addEventListener('click',guarded(async e=>{const reset=e.target.closest('[data-watched-manual-reset]');if(reset)return openManualReset(watchedShows[Number(reset.dataset.watchedManualReset)]);const rewatch=e.target.closest('[data-watched-rewatch]');if(rewatch)return window.AniBTLibraryTools.rewatch(watchedShows[Number(rewatch.dataset.watchedRewatch)]);const review=e.target.closest('[data-watched-review]');if(review)return window.AniBTReviews.open(watchedShows[Number(review.dataset.watchedReview)]);const restore=e.target.closest('[data-watched-restore]'),resources=e.target.closest('[data-watched-resources]');if(resources){const show=watchedShows[Number(resources.dataset.watchedResources)];$('watched-library-dialog').close();if(show.direct)return window.AniBTDiscover.find(show.title.slice(0,100));return window.AniBTResources.open({...show,...watchedMetadata.get(show.key)});}if(restore){const show=watchedShows[Number(restore.dataset.watchedRestore)];restore.disabled=true;try{await api('progress/show/restore',{key:show.key});if(show.direct){$('watched-library-dialog').close();$('progress-origin').value='direct';$('progress-view').value='active';changePage('progress');toast('已移回进度，可在资源旁点击「再次下载」。');}else{await loadWatched();await loadFeed();toast('已移回在追，观看进度和已删除文件状态保留；不会自动补下载。');}}finally{restore.disabled=false;}}}));
 
  if(S.openWatched){S.openWatched=false;queueMicrotask(()=>$('open-watched-library').click());}
  window.AniBTWatched={refresh:loadWatched};

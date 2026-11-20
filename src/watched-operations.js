@@ -90,25 +90,36 @@ export function recheckDeletionWarnings(tracking, readOperations, activeHashes, 
 }
 export function finishDeletion(op, active) {
   const result = deletionResult(op.targets);
-  if (!op.cleanupFolders?.length || result.filesRemaining || result.unknownFiles) return result;
+  if (result.filesRemaining || result.unknownFiles) return result;
   let removedFolders = 0, folderErrors = 0;
   const location = value => {
     const resolved = path.resolve(value);
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
   };
-  for (const folder of op.cleanupFolders) {
-    if (typeof folder !== 'string' || !path.isAbsolute(folder) || path.parse(folder).root === folder ||
-        !op.targets.some(target => location(target.savePath) === location(folder))) continue;
+  const roots = new Set((op.cleanupFolders || []).filter(folder => typeof folder === 'string' &&
+    path.isAbsolute(folder) && path.parse(folder).root !== folder &&
+    op.targets.some(target => location(target.savePath) === location(folder))));
+  if (op.scope === 'show') {
+    for (const target of op.targets) {
+      const content = target.contentPath;
+      if (!content || !path.isAbsolute(content) ||
+          !location(content).startsWith(location(target.savePath) + path.sep)) continue;
+      if (target.files.some(file => location(path.resolve(target.savePath, file.name)).startsWith(location(content) + path.sep)))
+        roots.add(content);
+    }
+  }
+  if (!roots.size) return result;
+  for (const folder of [...roots].sort((a, b) => b.length - a.length)) {
     const directory = location(folder);
     const inDirectory = value => value === directory || value.startsWith(directory + path.sep);
     if (active.some(t => {
       const save = t.save_path && location(t.save_path);
       const content = t.content_path && location(t.content_path);
-      return (save && inDirectory(save)) ||
+      return (save && (inDirectory(save) || (!content && directory.startsWith(save + path.sep)))) ||
         (content && (inDirectory(content) || directory.startsWith(content + path.sep)));
     })) continue;
     const candidates = new Set([folder]);
-    for (const target of op.targets.filter(target => location(target.savePath) === directory)) {
+    for (const target of op.targets) {
       for (const file of target.files) {
         let parent = path.dirname(path.resolve(target.savePath, file.name));
         while (location(parent) !== directory && inDirectory(location(parent))) {
@@ -123,7 +134,8 @@ export function finishDeletion(op, active) {
         fs.rmdirSync(candidate);
         if (location(candidate) === directory) removedFolders++;
       } catch (error) {
-        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) folderErrors++;
+        if (error.code !== 'ENOENT' && (location(candidate) === directory ||
+            !['ENOTEMPTY', 'EEXIST'].includes(error.code))) folderErrors++;
       }
     }
   }

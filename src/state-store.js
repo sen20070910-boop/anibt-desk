@@ -7,6 +7,8 @@ const domainFiles = [
   "manual-downloads.json",
   "tracking.json",
   "review-drafts.json",
+  "completions.json",
+  "completion-history.json",
   "anibt-control.json",
   "preferences.json",
 ];

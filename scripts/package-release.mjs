@@ -73,6 +73,7 @@ for (const file of [
   "dist/supervisor.mjs",
   "scripts/background.ps1",
   "scripts/app-update.ps1",
+  "scripts/close-playing-mpv.ps1",
   "scripts/install-gui-shortcut.ps1",
   "ui/index.html",
   "ui/performance.js",

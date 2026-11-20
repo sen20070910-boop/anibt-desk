@@ -537,3 +537,118 @@ test('marking an AniBT series watched excludes unassociated manual editions of t
   assert.deepEqual(context.candidates,[{hash:item.infoHash,ambiguous:false}]);
   assert.equal(context.latest,1);
 });
+
+test('confirmed manual-work reset clears only the selected work and requires a fresh preview', async t => {
+  let downloaderCalls = 0;
+  const qb = { login: async () => { downloaderCalls++; throw Error('unexpected qB use'); } };
+  const f = await fixture(t, { qb, manualQb: qb, episodeQb: qb });
+  const hash = 'd'.repeat(40), otherHash = 'e'.repeat(40), key = 'bgm:678', legacyKey = 'title:旧译名';
+  f.c.bindings = [{ bgmId: '678', title: '影片', aliases: ['旧译名'], canonicalTitle: '影片' }];
+  atomicWrite(f.configFile, f.c);
+  const manualFile = path.join(f.dir, 'data/manual-downloads.json');
+  const trackingFile = path.join(f.dir, 'data/tracking.json');
+  const draftsFile = path.join(f.dir, 'data/review-drafts.json');
+  const complete = path.join(f.dir, 'data/completions.json');
+  const archive = path.join(f.dir, 'data/completion-history.json');
+  const parse = file => JSON.parse(fs.readFileSync(file));
+  const at = '2026-11-15T00:00:00Z';
+  const other = { hash: otherHash, bgmId: '679', animeTitle: '影片', episode: '1', title: 'Unrelated same-name work', at, kind: 'manual', origin: 'discovery', status:'added' };
+  atomicWrite(manualFile, {
+    [hash]: { hash, title: 'Original edition', animeTitle: '影片', episode: '1', at, kind: 'manual', origin:'discovery', ledgerId:'old-original-release', status:'added' },
+    [otherHash]: other,
+  });
+  atomicWrite(trackingFile, { [legacyKey]:{title:'旧译名',completedAt:at,watched:1}, 'bgm:679':{title:'影片',bgmId:'679',watched:2} });
+  atomicWrite(draftsFile, { [legacyKey]:{text:'draft'}, 'bgm:679':{text:'other'} });
+  atomicWrite(complete, {version:1,tasks:{[hash]:{completed:true},[otherHash]:{completed:true}}});
+  atomicWrite(archive, [{hash,at},{hash:otherHash,at}]);
+  const ledger = emptyState();
+  ledger.done[item.id] = {...item,hash:item.infoHash,status:'added',at};
+  ledger.episodes['bgm:678:1:v1'] = 'old-original-release';
+  ledger.episodes['bgm:679:1:v1'] = otherHash;
+  atomicWrite(statePath(f.c,f.configFile),ledger);
+  const preview = () => f.request('progress/manual/reset/preview', {key});
+  const confirmed = (version, confirm = true) => f.request('progress/manual/reset', {key,version,confirm});
+  const initial = await preview();
+  assert.equal(initial.status,200); assert.equal(initial.data.records,1);
+  assert.equal((await confirmed(initial.data.version,false)).status,400);
+  const modified = parse(draftsFile); modified[legacyKey].text = 'new draft'; atomicWrite(draftsFile,modified);
+  assert.equal((await confirmed(initial.data.version)).status,409);
+  assert.equal(parse(manualFile)[hash].hash,hash);
+  assert.equal((await confirmed((await preview()).data.version)).data.removed,1);
+  assert.deepEqual(parse(manualFile),{[otherHash]:other});
+  assert.equal(parse(trackingFile)[legacyKey],undefined);
+  assert.equal(parse(trackingFile)['bgm:679'].watched,2);
+  assert.equal(parse(draftsFile)[legacyKey],undefined);
+  assert.equal(parse(complete).tasks[hash],undefined);
+  assert.deepEqual(parse(archive),[{hash:otherHash,at}]);
+  const state = parse(statePath(f.c,f.configFile));
+  assert.equal(state.episodes['bgm:678:1:v1'],undefined);
+  assert.equal(state.episodes['bgm:679:1:v1'],otherHash);
+  assert.equal(state.done[item.id].status,'added');
+  assert.equal(downloaderCalls,0);
+});
+
+test('a restored manual work reopens its exact original torrent and preserves file selection', async t => {
+  const hash = 'd'.repeat(40), key='title:影片', at='2026-11-15T00:00:00Z';
+  const qb = { login:async()=> '5.2.4', logout:async()=>{}, list:async()=>[], request:async()=>Response.json({save_path:'D:/Videos'}) };
+  const { createDiscovery } = await import('../src/discover.js');
+  const reads = [];
+  const discovery = createDiscovery(()=>({}), {network:{cacheKey:()=>'',read:async url=>{reads.push(url);throw Error('test: use stored hash fallback');}}});
+  const f=await fixture(t,{qb,discovery,discoveryFileQb:{...qb,discoveryFileManifest:async item=>{
+    assert.equal(item.infoHash,hash);
+    return ['Movie.mkv','Movie.JPSC.ass','Movie.JPTC.ass','[Fonts].7z'].map(path=>({path,size:30}));
+  }}});
+  atomicWrite(path.join(f.dir,'data/manual-downloads.json'),{[hash]:{hash,kind:'manual',origin:'discovery',status:'added',animeTitle:'影片',title:'Original edition',at,selectiveDownload:true,savePath:'D:/Videos/影片',sourceLinks:[{url:'https://nyaa.si/view/1234'}]}});
+  atomicWrite(path.join(f.dir,'data/tracking.json'),{[key]:{title:'影片',completedAt:at,watched:1}});
+  assert.equal((await f.request('progress/show/restore',{key})).status,200);
+  const show = (await f.request('progress')).data.shows.find(s=>s.key===key);
+  assert.equal(show.completedAt,undefined);
+  assert.equal(show.resources[0].progress,null);
+  const reopened=await f.request('discover/reopen',{key:show.resources[0].reDownloadKey});
+  assert.equal(reopened.status,200);
+  assert.equal(reopened.data.item.infoHash,hash);
+  assert.equal(reopened.data.savePath,'D:/Videos/影片');
+  const preview=await f.request('discover/files',{resultId:reopened.data.item.resultId});
+  assert.equal(preview.status,200);
+  assert.deepEqual(preview.data.files.map(row=>row.recommended),[true,true,false,true]);
+  assert.deepEqual(reads,['https://nyaa.si/download/1234.torrent']);
+});
+
+test('confirmed whole-work cleanup waits for mpv before removing its qB task and nested folders', async t => {
+  const hash = 'f'.repeat(40), key = 'title:film';
+  let root, folder, content, file, torrents = [], blocked = true;
+  const actions = [];
+  const qb = { login: async () => {}, logout: async () => {}, list: async () => torrents,
+    request: async name => {
+      if (name === 'app/preferences') return Response.json({ save_path: root });
+      if (name === 'torrents/files') return Response.json([{ name: 'edition/film.mkv', size: 3, priority: 1 }]);
+      assert.equal(name, 'torrents/delete');
+      actions.push('delete');
+      fs.unlinkSync(file);
+      torrents = [];
+      return new Response(null, { status: 204 });
+    },
+  };
+  const f = await fixture(t, { episodeQb: qb, fetchFeed: async () => [], closeMpvForTargets: async targets => {
+    assert.equal(targets[0].hash, hash);
+    if (blocked) throw Error('mpv still open');
+    actions.push('close');
+    return 1;
+  } });
+  root = path.join(f.dir, 'downloads'); folder = path.join(root, 'Film');
+  content = path.join(folder, 'edition'); file = path.join(content, 'film.mkv');
+  fs.mkdirSync(content, { recursive:true }); fs.writeFileSync(file, 'abc');
+  torrents = [{ hash, name:'Film release', content_path:content, save_path:folder }];
+  atomicWrite(path.join(f.dir,'data/manual-downloads.json'), { [hash]:{ hash, title:'Film release', animeTitle:'Film', kind:'manual', origin:'discovery', status:'added', at:new Date().toISOString() } });
+  const preview = () => f.request('progress/show/prepare',{key});
+  const confirm = async () => f.request('progress/show/confirm',{id:(await preview()).data.id,confirm:true});
+  assert.match((await confirm()).data.error,/mpv still open/);
+  assert.deepEqual(actions,[]);
+  assert.ok(fs.existsSync(file));
+  blocked = false;
+  const result = await confirm();
+  assert.equal(result.status,200);
+  assert.deepEqual(actions,['close','delete']);
+  assert.equal(fs.existsSync(folder),false);
+  assert.ok(fs.existsSync(root));
+});

@@ -1,8 +1,7 @@
 import {
   hasSubtitleExtension,
   hasVideoExtension,
-  sidecarLanguage,
-  subtitleLanguageName,
+  sidecarLanguageInfo,
 } from "./subtitle-language.js";
 
 const audio =
@@ -39,9 +38,8 @@ export function classifyDiscoveryFiles(files) {
             : font
               ? "font"
               : "other";
-    const language =
-      kind === "subtitle" ? subtitleLanguageName(sidecarLanguage(name)) : "";
-    return { index, path, size, kind, language, stem };
+    const subtitle = kind === "subtitle" ? sidecarLanguageInfo(name) : null;
+    return { index, path, size, kind, subtitle, stem };
   });
   const videoStems = new Set(
     rows.filter((row) => row.kind === "video").map((row) => row.stem),
@@ -58,7 +56,7 @@ export function classifyDiscoveryFiles(files) {
   );
   const selectedSubtitle = (row) =>
     row.kind === "subtitle" &&
-    row.language === "简中" &&
+    row.subtitle.code === "CHS" &&
     (hasCompanion(row.stem, videoStems) ||
       hasCompanion(row.stem.split("/").at(-1), uniqueNames));
   const hasAss = rows.some(
@@ -69,7 +67,7 @@ export function classifyDiscoveryFiles(files) {
     path: row.path,
     size: row.size,
     kind: row.kind,
-    language: row.language,
+    language: row.subtitle?.label || "",
     recommended:
       row.kind === "video" ||
       selectedSubtitle(row) ||

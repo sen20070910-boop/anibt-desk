@@ -4,6 +4,7 @@ import {
   createPortableUpdater,
   guardPortableUpdate,
 } from "./portable-updater.js";
+import { closeMpvForTargets } from "./mpv-close.js";
 import { createSubscriptionRoutes } from "./gui/subscription-routes.js";
 import { createSettingsRoutes } from "./gui/settings-routes.js";
 import { createDownloadRoutes } from "./gui/download-routes.js";
@@ -537,8 +538,8 @@ export function makeApplication({
       for (
         let retries = 0;
         targets.length &&
-        op.cleanupFolders?.length &&
-        result.filesRemaining &&
+        (op.scope === "show" || op.cleanupFolders?.length) &&
+        (result.filesRemaining || result.folderErrors) &&
         retries < 5;
         retries++
       ) {
@@ -890,30 +891,18 @@ export function makeApplication({
       if (change.wasRunning) await script("start");
     }
   }
-  async function downloadMutation(kind, run, client) {
+  async function localStateMutation(kind, run) {
     requireIdle();
     requireRecovered();
     busy = kind;
     const wasRunning = bg().running;
-    let release, qb;
+    let release;
     try {
       if (wasRunning) await script("stop");
       const c = getConfig();
       release = lock(statePath(c, configFile) + ".lock");
-      qb =
-        client ||
-        deps.episodeQb ||
-        deps.reprocessQb ||
-        deps.manualQb ||
-        new QbClient(c);
-      await (qb.connectForDownload ? qb.connectForDownload() : qb.login());
-      return await run(qb, c);
+      return await run(c);
     } finally {
-      try {
-        await qb?.logout();
-      } catch {
-        record("下载器会话退出失败，操作结果请以记录为准。", "warning");
-      }
       release?.();
       busy = null;
       feedCache = null;
@@ -925,6 +914,26 @@ export function makeApplication({
           record("自动追番暂未恢复，请点击启动。", "warning");
         }
     }
+  }
+  async function downloadMutation(kind, run, client) {
+    return localStateMutation(kind, async (c) => {
+      const qb =
+        client ||
+        deps.episodeQb ||
+        deps.reprocessQb ||
+        deps.manualQb ||
+        new QbClient(c);
+      try {
+        await (qb.connectForDownload ? qb.connectForDownload() : qb.login());
+        return await run(qb, c);
+      } finally {
+        try {
+          await qb.logout();
+        } catch {
+          record("下载器会话退出失败，操作结果请以记录为准。", "warning");
+        }
+      }
+    });
   }
   const historyDisplayFile = path.join(
     path.dirname(configFile),
@@ -1193,6 +1202,7 @@ export function makeApplication({
     get downloadMutation() {
       return downloadMutation;
     },
+    localStateMutation,
     get manualFile() {
       return manualFile;
     },
@@ -1235,6 +1245,9 @@ export function makeApplication({
     get finishWatched() {
       return finishWatched;
     },
+    closeMpvForTargets:
+      deps.closeMpvForTargets ||
+      ((targets) => closeMpvForTargets(root, targets)),
     get episodePlans() {
       return episodePlans;
     },

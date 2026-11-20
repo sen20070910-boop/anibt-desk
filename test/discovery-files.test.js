@@ -84,3 +84,14 @@ test('subtitle filenames distinguish Chinese without a script tag from simplifie
     .map(path => ({ path, size: 5 })));
   assert.deepEqual(rows.map(x => x.language), ['中文（简繁未标注）', '简中', '意大利语', '英语']);
 });
+
+test('dual-language VCB sidecars select the matching simplified subtitle and Fonts archive', () => {
+  const stem = 'Release/[Nekomoe kissaten&VCB-Studio] Kusuriya no Hitorigoto 2nd Season [48][Ma10p_1080p][x265_flac_aac]';
+  const files = [stem+'.mkv', stem+'.JPSC.ass', stem+'.JPTC.ass', 'Release/Season [Fonts].7z', 'Release/SPs/Bonus.JPSC.ass']
+    .map(path => ({ path, size: 10 }));
+  const rows = classifyDiscoveryFiles(files);
+  assert.deepEqual(rows.map(row => row.language), ['', '简中 / 日文', '繁中 / 日文', '', '']);
+  assert.deepEqual(rows.map(row => row.recommended), [true, true, false, true, false]);
+  const withoutMatchingSimplified = classifyDiscoveryFiles(files.filter((_, index) => index !== 1));
+  assert.equal(withoutMatchingSimplified.find(row => row.kind === 'font').recommended, false);
+});

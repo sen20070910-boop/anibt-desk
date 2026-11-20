@@ -9,11 +9,13 @@ import {
   getReviewDraft,
   writeReviewDraft,
   clearReviewDraft,
+  readDrafts,
 } from "../review-drafts.js";
 import { randomBytes } from "node:crypto";
 import { validateReview } from "../reviews.js";
 import { loadState, statePath } from "../runner.js";
 import { buildProgress } from "../progress.js";
+import { manualWorkReset } from "../forget-manual-work.js";
 import {
   recheckDeletionWarnings,
   watchedOperations,
@@ -24,7 +26,109 @@ import { submitAgain, resetCompletion } from "../reprocessing.js";
 import path from "node:path";
 // Route boundary extracted without changing business decisions.
 export function createProgressRoutes(ctx) {
+  function readReset(key, items, config) {
+    const file = statePath(config, ctx.configFile);
+    const manual = ctx.readManual();
+    const state = loadState(file, config, Object.values(manual));
+    const tracking = ctx.readTracking();
+    const drafts = readDrafts(ctx.configFile);
+    const plan = manualWorkReset({
+      key,
+      items,
+      config,
+      state,
+      manual,
+      tracking,
+      drafts,
+    });
+    const version = digest({
+      key,
+      records: plan.records,
+      viewing: plan.viewing,
+    });
+    return { file, manual, state, tracking, drafts, plan, version };
+  }
   return async function handle({ route, req, res, body, u }) {
+    if (
+      route === "POST /api/progress/manual/reset/preview" ||
+      route === "POST /api/progress/manual/reset"
+    ) {
+      const key = body.key;
+      if (
+        typeof key !== "string" ||
+        key.length > 500 ||
+        !/^(bgm:\d{1,8}|title:.+)$/.test(key)
+      )
+        throw new Error("作品标识无效，请刷新进度。");
+      const preview = route.endsWith("/preview");
+      if (!preview && body.confirm !== true)
+        throw new Error("请先核对作品并确认删除。");
+      const items = await ctx.readFeed(false).catch(() => []);
+      if (preview) {
+        const { plan, version } = readReset(key, items, ctx.getConfig());
+        ctx.json(res, 200, {
+          title: plan.title,
+          records: plan.records.length,
+          version,
+        });
+        return;
+      }
+      const result = await ctx.localStateMutation(
+        "reset-manual-work",
+        async (config) => {
+          const currentItems = await ctx.readFeed(false).catch(() => items);
+          const reset = readReset(key, currentItems, config);
+          if (body.version !== reset.version)
+            throw Object.assign(
+              new Error("作品记录或评价已变化，请重新预览后确认。"),
+              { status: 409 },
+            );
+          const directory = path.join(path.dirname(ctx.configFile), "data");
+          const completionFile = path.join(directory, "completions.json");
+          const archiveFile = path.join(directory, "completion-history.json");
+          const completion = ctx.readJsonFile(completionFile, {
+            version: 1,
+            tasks: {},
+          });
+          const archive = ctx.readJsonFile(archiveFile, []);
+          if (
+            completion?.version !== 1 ||
+            !completion.tasks ||
+            typeof completion.tasks !== "object" ||
+            Array.isArray(completion.tasks) ||
+            !Array.isArray(archive)
+          )
+            throw new Error("完成通知记录无法核对，请检查本机记录。");
+          reset.plan.apply();
+          const entries = [
+            { file: reset.file, value: reset.state },
+            { file: ctx.manualFile, value: reset.manual },
+            { file: ctx.trackingFile, value: reset.tracking },
+            {
+              file: path.join(directory, "review-drafts.json"),
+              value: reset.drafts,
+            },
+          ];
+          const completed = Object.keys(completion.tasks).filter((hash) =>
+            reset.plan.hashes.has(hash.toLowerCase()),
+          );
+          if (completed.length) {
+            for (const hash of completed) delete completion.tasks[hash];
+            entries.push({ file: completionFile, value: completion });
+          }
+          const nextArchive = archive.filter(
+            (row) =>
+              !reset.plan.hashes.has(String(row?.hash || "").toLowerCase()),
+          );
+          if (nextArchive.length !== archive.length)
+            entries.push({ file: archiveFile, value: nextArchive });
+          ctx.stateStore.commit(entries, { kind: "reset-manual-work" });
+          return { ok: true, removed: reset.plan.records.length };
+        },
+      );
+      ctx.json(res, 200, result);
+      return;
+    }
     if (route === "POST /api/progress/review/draft") {
       const tracking = ctx.readTracking(),
         key = body.key;
@@ -164,10 +268,11 @@ export function createProgressRoutes(ctx) {
       )
         throw new Error("番剧信息无效。");
       const tracking = ctx.readTracking();
-      if (!tracking[body.key]?.completedAt)
+      const entryKey = ctx.trackedKey(tracking, body.key);
+      if (!tracking[entryKey]?.completedAt)
         throw new Error("这部番不在我看过的列表中。");
-      delete tracking[body.key].completedAt;
-      tracking[body.key].archived = false;
+      delete tracking[entryKey].completedAt;
+      tracking[entryKey].archived = false;
       ctx.atomicWrite(ctx.trackingFile, tracking);
       ctx.json(res, 200, { ok: true });
       return;
@@ -292,6 +397,12 @@ export function createProgressRoutes(ctx) {
           const targets = await deletionManifest(context, qb, c);
           if (digest(targets) !== plan.targets)
             throw new Error("任务或文件范围已变化，请重新预览。");
+          const closedPlayers = await ctx.closeMpvForTargets(targets);
+          if (
+            closedPlayers &&
+            digest(await deletionManifest(context, qb, c)) !== plan.targets
+          )
+            throw new Error("退出播放器后下载范围发生变化，请重新预览。");
           const priorKey = ctx.trackedKey(tracking, plan.key, c);
           return ctx.finishWatched(
             {
@@ -609,16 +720,26 @@ export function createProgressRoutes(ctx) {
           // Preserve saved warnings if the evidence cannot be read.
         }
       }
+      const manual = ctx.readManual();
       ctx.json(res, 200, {
         shows: buildProgress({
           items,
           state,
-          manual: ctx.readManual(),
+          manual,
           config: c,
           tracking,
           completed: completed.tasks,
           torrents: qb.torrents,
-        }),
+        }).map((show) => ({
+          ...show,
+          resources: show.resources.map(({ recordId, ...resource }) => ({
+            ...resource,
+            reDownloadKey:
+              /^[a-f0-9]{40}$/.test(resource.hash) && manual[recordId]
+                ? ctx.historyKey({ id: recordId, ...manual[recordId] })
+                : "",
+          })),
+        })),
         feedError,
         qbConnected: qb.connected,
         historicalUnidentified: Object.values(state.done).filter(
