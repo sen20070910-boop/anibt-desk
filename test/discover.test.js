@@ -175,3 +175,8 @@ test('script variants and release-style season numbers resolve only the intended
   assert.equal(calls.includes('深夜侦探'), false);
   assert.equal(calls.includes('深夜偵探'), false);
 });
+
+test('subtitle labels distinguish explicit subtitle languages from a release audio tag', () => {
+  assert.deepEqual(inferRelease('Tokyo Godfathers (2003) [BluRay.1080p.x264.FLAC.ITA.AAC.JAP.ENG.Subs.Ita.Eng.v2]').languages, ['IT', 'EN']);
+  assert.deepEqual(inferRelease('Demo [BluRay.1080p.FLAC.ITA.AAC.JAP.ENG]').languages, []);
+});

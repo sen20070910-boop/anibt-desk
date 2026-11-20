@@ -18,6 +18,7 @@ function resetDiscoveryFiles() {
   $('discovery-files-controls').classList.add('hidden');
   $('discovery-files-list').classList.add('hidden');
   $('discovery-files-list').textContent = '';
+  $('discovery-subtitle-evidence').classList.add('hidden');
   text('discovery-files-summary', '读取后可跳过特典、扫图等附带文件。');
 }
 
@@ -52,6 +53,13 @@ async function loadDiscoveryFiles() {
     const preview = await api('discover/files', { resultId: item.resultId });
     if (request !== discoveryFiles.request || !$('discovery-dialog').open) return;
     discoveryFiles.preview = preview;
+    const sidecars = preview.files.filter(file => file.kind === 'subtitle');
+    const languages = [...new Set(sidecars.map(file => file.language))];
+    text('discovery-subtitle-evidence', (languages.length
+      ? '外挂字幕（按文件名） · ' + languages.join(' / ') + '。'
+      : '文件清单中未列出正片外挂字幕。')
+      + ' 视频内封字幕可在下载后从任务详情读取。');
+    $('discovery-subtitle-evidence').classList.remove('hidden');
     const groups = new Map();
     for (const file of preview.files) {
       if (!groups.has(file.kind)) groups.set(file.kind, []);
@@ -69,7 +77,11 @@ async function loadDiscoveryFiles() {
     $('discovery-files-controls').classList.remove('hidden');
     updateDiscoveryFilePreset('recommend');
   } catch (error) {
-    if (request === discoveryFiles.request) text('discovery-files-summary', error.message);
+    if (request === discoveryFiles.request) {
+      text('discovery-files-summary', error.message === '没有找到此功能。'
+        ? '当前界面服务未加载文件选择功能。请关闭所有 AniBT 窗口，等待约 30 秒后再打开。'
+        : error.message);
+    }
   } finally {
     if (request === discoveryFiles.request) {
       discoveryFiles.loading = false;
@@ -92,7 +104,13 @@ $('discovery-files-list').addEventListener('change', event => {
 });
 $('discovery-files-read').addEventListener('click', guarded(loadDiscoveryFiles));
 $('discovery-dialog').addEventListener('close', () => { discoveryFiles.request++; });
-function releaseLanguage(item){return item.languages.includes('CHS')?(item.languages.includes('CHT')?'简中 / 繁中':'简中'):item.languages.includes('CHT')?'繁中':item.languages.includes('EN')?'英文':'字幕未标注';}
+const discoveryLanguageNames = new Intl.DisplayNames('zh-CN', { type: 'language', fallback: 'none' });
+function releaseLanguage(item) {
+  const special = new Map([['CHS', '简中'], ['CHT', '繁中'], ['ZH', '中文（简繁未标注）'], ['EN', '英文']]);
+  const names = [...new Set(item.languages.map(code => special.get(code) ||
+    (/^[a-z]{2,3}$/i.test(code) ? discoveryLanguageNames.of(code.toLowerCase()) : null)).filter(Boolean))];
+  return names.length ? names.join(' / ') : '字幕未标注';
+}
 function isDiscoveredPresent(item) {
   return D.present.has(item.infoHash?.toLowerCase());
 }
@@ -158,7 +176,7 @@ async function searchDiscover(force = false) {
     renderDiscover();
   }
 }
-function setSelectedVariant(id){D.selected=D.variants.find(i=>i.resultId===id)||D.variants[0];const item=D.selected;if(!item)return;resetDiscoveryFiles();$('discovery-acknowledge').checked=false;$('discovery-allow-alternate').checked=false;$('discovery-add-error').classList.add('hidden');const unknown=S.status?.config.filters.languages.includes('CHS')&&!item.languages.includes('CHS');$('discovery-subtitle-check').classList.toggle('hidden',!unknown);$('discovery-selected-meta').innerHTML=`<span class="pill ${item.languages.includes('CHS')?'green':'gray'}">${escape(releaseLanguage(item))}</span><span class="pill gray">${escape(item.resolution||'画质未标注')}</span><span class="pill gray">${escape(item.sizeText||'体积未提供')}</span><span class="pill gray">${item.seeders==null?'做种数未提供':'做种 '+item.seeders}</span>`;$('discovery-source-links').innerHTML=item.links.map(link=>`<a href="${escape(link.url)}" target="_blank" rel="noopener noreferrer">${escape(sourceLabel[link.source]||'来源')} 发布页 ↗</a>`).join('');updateDiscoverAddButton();if(!D.pathEdited&&!D.suppressPath)void updateDiscoveryPath();}
+function setSelectedVariant(id){D.selected=D.variants.find(i=>i.resultId===id)||D.variants[0];const item=D.selected;if(!item)return;resetDiscoveryFiles();$('discovery-acknowledge').checked=false;$('discovery-allow-alternate').checked=false;$('discovery-add-error').classList.add('hidden');const unknown=S.status?.config.filters.languages.includes('CHS')&&!item.languages.includes('CHS');$('discovery-subtitle-check').classList.toggle('hidden',!unknown);$('discovery-selected-meta').innerHTML=`<span class="pill ${item.languages.includes('CHS')?'green':'gray'}" title="来自发布标题或站点提供的标注">${escape(releaseLanguage(item))}</span><span class="pill gray">${escape(item.resolution||'画质未标注')}</span><span class="pill gray">${escape(item.sizeText||'体积未提供')}</span><span class="pill gray">${item.seeders==null?'做种数未提供':'做种 '+item.seeders}</span>`;$('discovery-source-links').innerHTML=item.links.map(link=>`<a href="${escape(link.url)}" target="_blank" rel="noopener noreferrer">${escape(sourceLabel[link.source]||'来源')} 发布页 ↗</a>`).join('');updateDiscoverAddButton();if(!D.pathEdited&&!D.suppressPath)void updateDiscoveryPath();}
 function updateDiscoverAddButton(){const item=D.selected;if(!item)return;const subtitleNeeded=S.status?.config.filters.languages.includes('CHS')&&!item.languages.includes('CHS');const added=isDiscoveredPresent(item)&&!D.progressTarget;$('discovery-add').disabled=D.adding||D.pathLoading||!!D.pathError||added||!item.downloadable||discoveryFiles.loading||!discoveryFiles.preview||!discoveryFiles.selected.size||(D.progressTarget&&!$('discovery-progress-ack').checked)||(subtitleNeeded&&!$('discovery-acknowledge').checked);$('discovery-add').innerHTML=icon(added?'check':'download')+(D.adding?'正在添加…':added?'已在下载列表':!discoveryFiles.preview?'先读取文件清单':'下载选中文件');}
 function openDiscoverDetail(index){D.variants=D.renderedGroups[index]||[];if(!D.variants.length)return;D.pathEdited=false;D.pathLoading=false;D.pathError='';D.suppressPath=true;D.pathRequest++;D.selected=D.variants[0];const first=D.variants[0];text('discovery-detail-title',first.workTitle||first.title);text('discovery-detail-subtitle',D.variants.length>1?`找到 ${D.variants.length} 个发行版本，请选择需要的画质、字幕与压制组。`:first.title);$('discovery-version-group').innerHTML='<option value="">全部发布组</option>'+[...new Set(D.variants.map(i=>i.groupName||'未标注发布组'))].sort((a,b)=>a.localeCompare(b,'zh-CN')).map(g=>`<option value="${escape(g)}">${escape(g)}</option>`).join('');renderVersionGroups();$('discovery-save-path').value='';$('discovery-save-path').placeholder='正在计算作品子目录…';text('discovery-path-hint','');D.suppressPath=false;$('discovery-paused').checked=!!S.status?.config.qb.paused;$('discovery-progress-check').classList.toggle('hidden',!D.progressTarget);$('discovery-progress-ack').checked=false;text('discovery-progress-label',D.progressTarget?`我已核对这份资源对应《${D.progressTarget.title}》第 ${D.progressTarget.episode} 集，将关联到追番进度。`:'');setSelectedVariant(first.resultId);$('discovery-dialog').showModal();void refreshDiscoveryTasks(true);}
 async function addDiscovered(){if(D.adding||D.pathLoading||D.pathError||!D.selected||discoveryFiles.loading||!discoveryFiles.preview||!discoveryFiles.selected.size)return;const selected=D.selected;if(isDiscoveredPresent(selected)&&!D.progressTarget)return;D.adding=true;const fileSelection={previewId:discoveryFiles.preview.previewId,indices:[...discoveryFiles.selected]};updateDiscoverAddButton();$('discovery-add-error').classList.add('hidden');try{await requireDiscoveryFolders();const result=await api('discover/add',{...(D.progressTarget&&$('discovery-progress-ack').checked?{association:D.progressTarget}:{}),resultId:selected.resultId,fileSelection,savePath:D.pathEdited?$('discovery-save-path').value.trim():'',paused:$('discovery-paused').checked,acknowledgeSubtitle:$('discovery-acknowledge').checked,allowAlternate:$('discovery-allow-alternate').checked});D.tasksRequest++;selected.infoHash=result.hash;D.present.add(result.hash);D.progressTarget=null;$('discovery-progress-check').classList.add('hidden');toast(result.startPending?'文件选择已应用，任务启动待确认，请到 qB 查看。':result.existing?'qBittorrent 已存在这个任务，保留原保存位置。':'已添加到 qBittorrent'+(result.savePath?' · '+result.savePath:''));await Promise.allSettled([loadStatus(),loadQb(true),refreshDiscoveryTasks(true)]);renderDiscover();}catch(e){text('discovery-add-error',e.message);$('discovery-add-error').classList.remove('hidden');}finally{D.adding=false;updateDiscoverAddButton();}}

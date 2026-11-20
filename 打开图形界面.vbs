@@ -16,4 +16,4 @@ If nodePath = "" Then
   WScript.Quit 1
 End If
 shell.CurrentDirectory = base
-shell.Run Chr(34) & nodePath & Chr(34) & " " & Chr(34) & base & "\dist\gui.mjs" & Chr(34), 0, False
+shell.Run Chr(34) & nodePath & Chr(34) & " " & Chr(34) & base & "\dist\gui.mjs" & Chr(34) & " --desktop", 0, False

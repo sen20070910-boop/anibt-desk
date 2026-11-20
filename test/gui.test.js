@@ -12,9 +12,9 @@ import { mergeGroupOptions } from '../src/groups.js';
 import {QbClient} from '../src/qb.js';
 
 const item={id:'release-test',title:'[Test] 测试番 01',animeTitle:'测试番',bgmId:'123',episode:'1',version:'v1',episodeKey:'测试番:1:v1',groupName:'Test',groupSlug:'test',languages:['CHS'],subtitles:['INTERNAL'],resolution:'1080p',infoHash:'a'.repeat(40),torrentUrl:'',publishedAt:new Date().toUTCString()};
-async function fixture(t,deps={}) {
+async function fixture(t,deps={},options={}) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'anibt-gui-'));const configFile=path.join(dir,'config.json');const c=clone(defaults);c.rssUrl='https://anibt.net/rss/subscriptions.xml?key=private-test-token';c.qb.password='secret-test-password';atomicWrite(configFile,c);
-  const app=makeApplication({configFile,token:'test-ui-session',deps:{fetchFeed:async()=>[item],backgroundStatus:()=>({running:false,autostart:false}),...deps}});const server=http.createServer(app.handler);await new Promise(r=>server.listen(0,'127.0.0.1',r));while(server.address().port<11000){await new Promise(r=>server.close(r));await new Promise(r=>server.listen(0,'127.0.0.1',r));}const base=`http://127.0.0.1:${server.address().port}`;
+  const app=makeApplication({...options,configFile,token:'test-ui-session',deps:{fetchFeed:async()=>[item],backgroundStatus:()=>({running:false,autostart:false}),...deps}});const server=http.createServer(app.handler);await new Promise(r=>server.listen(0,'127.0.0.1',r));while(server.address().port<11000){await new Promise(r=>server.close(r));await new Promise(r=>server.listen(0,'127.0.0.1',r));}const base=`http://127.0.0.1:${server.address().port}`;
   t.after(async()=>{await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});});
   const request=async(route,body,headers={})=>{const response=await fetch(base+'/api/'+route,{headers:{'X-App-Token':app.token,...(body?{'Content-Type':'application/json'}:{}),...headers},...(body?{method:'POST',body:JSON.stringify(body)}:{})});return{status:response.status,data:await response.json()};};
   return{dir,c,configFile,base,request};
@@ -449,7 +449,7 @@ test('review drafts and rewatch preserve earlier reviews without starting downlo
  let starts=0;const f=await fixture(t,{qb:{login:async()=>{throw Error('offline');},logout:async()=>{}},episodeQb:{connectForDownload:async()=>starts++},updateNetwork:{read:async()=>({text:JSON.stringify({tag_name:'v999.0.0',html_url:'https://github.com/owner/project/releases/tag/v999.0.0',body:'release'})})}});atomicWrite(path.join(f.dir,'data/tracking.json'),{'bgm:123':{title:'PRIVATE_ANIME',bgmId:'123',watched:12,startEpisode:1,archived:false,completedAt:'2026-11-05T00:00:00Z',personalReview:{score:9,text:'PRIVATE_REVIEW',createdAt:'2026-11-05T00:00:00Z',updatedAt:'2026-11-05T00:00:00Z'}}});
  let review=(await f.request('progress/review?key=bgm:123')).data;let draft=await f.request('progress/review/draft',{key:'bgm:123',draftVersion:review.draftVersion,baseVersion:review.version,score:8.5,text:'PRIVATE_DRAFT',rewatch:true});assert.equal(draft.status,200);assert.equal((await f.request('progress/review?key=bgm:123')).data.draft.text,'PRIVATE_DRAFT');
  let r=await f.request('progress/rewatch',{key:'bgm:123',completedAt:review.completedAt,reviewVersion:review.version,confirm:true});assert.equal(r.status,200);review=(await f.request('progress/review?key=bgm:123')).data;assert.equal(review.review,null);assert.equal(review.sessions[0].personalReview.text,'PRIVATE_REVIEW');assert.equal(review.sessions[0].draft.text,'PRIVATE_DRAFT');assert.equal(starts,0);assert.equal(JSON.parse(fs.readFileSync(path.join(f.dir,'data/tracking.json')))['bgm:123'].watched,0);
- const diagnostic=JSON.stringify((await f.request('library/diagnostics')).data);for(const secret of ['PRIVATE_ANIME','PRIVATE_REVIEW','PRIVATE_DRAFT','private-test-token','secret-test-password',f.dir])assert.ok(!diagnostic.includes(secret));assert.equal((await f.request('library/check-update',{})).data.configured,false);await f.request('library/update-source',{repository:'owner/project'});assert.equal((await f.request('library/check-update',{})).data.newer,true);
+ const diagnostic=JSON.stringify((await f.request('library/diagnostics')).data);for(const secret of ['PRIVATE_ANIME','PRIVATE_REVIEW','PRIVATE_DRAFT','private-test-token','secret-test-password',f.dir])assert.ok(!diagnostic.includes(secret));assert.equal((await f.request('library/status')).data.repository,'sen20070910-boop/anibt-desk');await f.request('library/update-source',{repository:'owner/project'});assert.equal((await f.request('library/check-update',{})).data.newer,true);
  const created=await f.request('library/backup',{});assert.equal(created.status,200);const backup=(await f.request('library/backup?id='+created.data.id)).data;assert.equal(backup.tracking['bgm:123'].watchSessions.length,1);assert.equal((await f.request('backup/preview',backup)).status,200);
 });
 
@@ -473,4 +473,43 @@ test('finishing a rewatch keeps the first review and the second review becomes a
 
 test('diagnostics still work for broken settings or tracking without exposing their contents',async t=>{
  const f=await fixture(t);fs.writeFileSync(f.configFile,'PRIVATE_BROKEN_CONFIG');fs.mkdirSync(path.join(f.dir,'data'),{recursive:true});fs.writeFileSync(path.join(f.dir,'data/tracking.json'),'PRIVATE_BROKEN_TRACKING');const r=await f.request('library/diagnostics');assert.equal(r.status,200);assert.equal(r.data.configValid,false);assert.equal(r.data.trackingReadable,false);assert.ok(!JSON.stringify(r.data).includes('PRIVATE_BROKEN'));
+});
+
+test('GUI serves the frontend loaded at startup after an on-disk update', async t => {
+ const uiRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'anibt-ui-assets-'));
+ t.after(() => fs.rmSync(uiRoot, { recursive: true, force: true }));
+ const file = path.join(uiRoot, 'discover.js');
+ fs.writeFileSync(file, 'old frontend');
+ const f = await fixture(t, {}, { uiRoot });
+ fs.writeFileSync(file, 'new frontend');
+ assert.equal(await (await fetch(f.base + '/discover.js')).text(), 'old frontend');
+});
+
+test('subtitle probing only reads the completed local video selected from a managed task', async t => {
+ const hash = 'a'.repeat(40);
+ let root, probed = 0;
+ const qb = {
+   login: async () => {}, logout: async () => {},
+   list: async () => [{ hash, name: 'Film', category: 'AniBT', save_path: root, progress: 0.5 }],
+   request: async () => ({ json: async () => [
+      { name: 'film.mkv', priority: 1, size: 5, progress: 1 },
+      { name: 'film.sc.ass', priority: 1, size: 5, progress: 1 },
+      { name: 'preview.mkv', priority: 1, size: 5, progress: 0.5 },
+   ] }),
+ };
+ const f = await fixture(t, { qb, historyQb: qb, subtitleProbe: async (file) => {
+   probed++; assert.equal(file, path.join(fs.realpathSync(root), 'film.mkv'));
+   return [{ language: '简中', codec: 'ass' }];
+ } });
+ root = f.dir;
+ f.c.qb.category = 'AniBT';
+ atomicWrite(f.configFile, f.c);
+ for (const name of ['film.mkv', 'film.sc.ass', 'preview.mkv']) fs.writeFileSync(path.join(root, name), 'media');
+ const preview = (await f.request('history/task?hash=' + hash)).data;
+ assert.deepEqual(preview.subtitleVideos, [{ index: 0, name: 'film.mkv' }]);
+ assert.deepEqual(preview.sidecarSubtitles, [{ name: 'film.sc.ass', language: '简中' }]);
+ assert.equal((await f.request('history/subtitles', { hash, index: 2 })).status, 400);
+ assert.equal(probed, 0);
+ assert.deepEqual((await f.request('history/subtitles', { hash, index: 0 })).data.tracks, [{ language: '简中', codec: 'ass' }]);
+ assert.equal(probed, 1);
 });

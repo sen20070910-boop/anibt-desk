@@ -78,3 +78,9 @@ test('reprocessing history does not silently redownload a deleted selective task
   const qb = { list: async () => [], add: async () => { throw new Error('unexpected submit'); } };
   await assert.rejects(() => submitAgain(qb, item, { requireExisting: true }), /重新勾选/);
 });
+
+test('subtitle filenames distinguish Chinese without a script tag from simplified and other languages', () => {
+  const rows = classifyDiscoveryFiles(['movie.chi.ass', 'movie.zh-Hans.srt', 'movie.ita.srt', 'movie.eng.sup']
+    .map(path => ({ path, size: 5 })));
+  assert.deepEqual(rows.map(x => x.language), ['中文（简繁未标注）', '简中', '意大利语', '英语']);
+});

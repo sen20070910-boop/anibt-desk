@@ -5,6 +5,7 @@ import { Converter } from 'opencc-js/t2cn';
 import { parseFeed } from './feed.js';
 import { normalizeHash, magnetHash, torrentInfoHash } from './torrent.js';
 import { createSourceNetwork, sourceUrl } from './source-network.js';
+import { titleSubtitleCodes } from './subtitle-language.js';
 
 export const sourceNames = {
   anibt: 'AniBT',
@@ -21,13 +22,13 @@ const str=x=>typeof x==='object'&&x?String(x['#text']||''):String(x??'');
 const xml=new XMLParser({ignoreAttributes:false,parseTagValue:false,trimValues:true});
 const clean=x=>load(String(x||'')).text().replace(/\s+/g,' ').trim();
 export function inferRelease(title,description='') {
-  const text=title+' '+description;const languages=[];
+  const text=title+' '+description;const languages=titleSubtitleCodes(text);
   if(/简|簡|\bCHS\b|\bGB\b|\bGB2312\b|\bSC\b/i.test(text))languages.push('CHS');
   if(/繁|\bCHT\b|\bBIG5\b|\bTC\b/i.test(text))languages.push('CHT');
-  if(/\bENG?\b|\bEnglish\b|英[文语]/i.test(text))languages.push('EN');
+  if(/\[(?:EN|ENG|English)\]|English\s+(?:subs?|subtitles?)|英[文语語]字幕/i.test(text))languages.push('EN');
   let workTitle=title.replace(/^[\[【][^\]】]+[\]】]\s*/,'').replace(/\s+(?:\d+-bit|(?:2160|1080|720|480)[pi]|BDRip|BluRay|WebRip|WEB-DL|HEVC|AVC|x26[45]).*$/i,'').replace(/\s*\[(?:\d{1,3}(?:v\d+)?|Fin|Reseed[^\]]*)\].*$/i,'').replace(/\s+-\s+\d{1,3}(?:v\d+)?\b.*$/i,'').trim();
   if(!workTitle)workTitle=title;
-  return{workTitle,groupName:title.match(/^[\[【]([^\]】]+)[\]】]/)?.[1]||'',languages,resolution:title.match(/\b(2160p|1080p|720p|480p|4K)\b/i)?.[1]?.toLowerCase()||'',subtitles:/内封|內封/.test(text)?['INTERNAL']:/内嵌|內嵌/.test(text)?['EMBEDDED']:/外挂|外掛/.test(text)?['EXTERNAL']:[]};
+  return{workTitle,groupName:title.match(/^[\[【]([^\]】]+)[\]】]/)?.[1]||'',languages:[...new Set(languages)],resolution:title.match(/\b(2160p|1080p|720p|480p|4K)\b/i)?.[1]?.toLowerCase()||'',subtitles:/内封|內封/.test(text)?['INTERNAL']:/内嵌|內嵌/.test(text)?['EMBEDDED']:/外挂|外掛/.test(text)?['EXTERNAL']:[]};
 }
 function validPage(url,base){if(typeof url!=='string'||!url.trim())return '';try{return sourceUrl(url,base);}catch{return '';}}
 function sizeBytes(text){const m=String(text).match(/([\d.]+)\s*([KMGT]?i?B)/i);if(!m)return 0;const power={B:0,K:1,M:2,G:3,T:4}[m[2][0].toUpperCase()]||0;return Number(m[1])*(/i/i.test(m[2])?1024:1000)**power;}

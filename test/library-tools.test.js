@@ -31,3 +31,27 @@ test('review draft is recoverable after the entire GUI server is recreated',asyn
  const start=async()=>{const app=makeApplication({configFile:f.file,token:'restart-test',deps:{backgroundStatus:()=>({running:false}),fetchFeed:async()=>[]}});server=http.createServer(app.handler);await new Promise(r=>server.listen(0,'127.0.0.1',r));return async(route,body)=>{const response=await fetch('http://127.0.0.1:'+server.address().port+'/api/'+route,{headers:{'X-App-Token':'restart-test',...(body?{'Content-Type':'application/json'}:{})},...(body?{method:'POST',body:JSON.stringify(body)}:{})});return response.json();};};
  try{let request=await start(),initial=await request('progress/review?key=bgm:123');await request('progress/review/draft',{key:'bgm:123',baseVersion:initial.version,draftVersion:initial.draftVersion,score:8,text:'进程重启后恢复'});await new Promise(r=>server.close(r));request=await start();const result=await request('progress/review?key=bgm:123');assert.equal(result.review,null);assert.equal(result.draft.text,'进程重启后恢复');}finally{if(server?.listening)await new Promise(r=>server.close(r));}
 });
+
+test('official release checking works without configuration and reuses its daily cache', async () => {
+ const { createReleaseChecker, OFFICIAL_REPOSITORY } = await import('../src/release-info.js');
+ let saved, calls = 0;
+ const newChecker = () => createReleaseChecker({ read: () => saved, write: value => { saved = value; }, network: {
+   read: async url => {
+      calls++;
+      const repo = new URL(url).pathname.replace(/^\/repos\//, '').replace(/\/releases\/latest$/, '');
+      return { text: JSON.stringify({ tag_name: 'v999.0.0', html_url: 'https://github.com/' + repo + '/releases/tag/v999.0.0' }) };
+   },
+ } });
+ const checker = newChecker();
+ assert.equal(checker.settings().repository, OFFICIAL_REPOSITORY);
+ assert.equal((await checker.check()).newer, true);
+ assert.equal((await newChecker().check()).latestVersion, '999.0.0');
+ assert.equal(calls, 1);
+ await checker.check({ force: true });
+ assert.equal(calls, 2);
+ checker.setRepository('owner/project');
+ assert.match((await checker.check()).url, /owner\/project/);
+ assert.equal(calls, 3);
+ checker.setRepository('');
+ assert.equal(checker.settings().repository, OFFICIAL_REPOSITORY);
+});

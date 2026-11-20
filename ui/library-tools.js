@@ -131,7 +131,7 @@
         (s.backup.lastError ? " · " + s.backup.lastError : ""),
     );
     text("library-version-status", "当前版本 v" + s.version);
-    $("library-update-repository").value = s.repository;
+    $("library-update-repository").value = s.repositoryOverride;
     $("automatic-backup-list").innerHTML = s.backups.length
       ? s.backups
           .map(
@@ -155,6 +155,51 @@
     $("library-tools-dialog").showModal();
     void run($("library-tools-open"), status);
   });
+  let updateRevision = 0;
+  let autoCheckAfter = 0;
+  let checkingUpdate = false;
+  async function checkUpdate(automatic) {
+    if (
+      checkingUpdate ||
+      (automatic &&
+        (!window.AniBTRuntime.active() || Date.now() < autoCheckAfter))
+    )
+      return;
+    const revision = updateRevision;
+    checkingUpdate = true;
+    const button = $("library-update-check");
+    button.disabled = true;
+    const result = $("library-update-result");
+    if (!automatic) text("library-update-result", "正在检查…");
+    try {
+      const update = await api("library/check-update", { automatic });
+      if (revision !== updateRevision) return;
+      autoCheckAfter = Date.now() + 86400000;
+      text("app-update-notice-text", "程序有新版本 v" + update.latestVersion);
+      $("app-update-notice").classList.toggle("hidden", !update.newer);
+      result.innerHTML = `<p>${update.newer ? "发现新版" : "最新稳定版"} v${escape(update.latestVersion)}${update.newer ? "" : "，当前无需升级。"}</p><a href="${escape(update.url)}" target="_blank" rel="noopener noreferrer">${update.newer ? "打开发布页下载便携包" : "查看发布页"} ↗</a>${update.notes ? `<pre class="release-notes">${escape(update.notes)}</pre>` : ""}`;
+    } catch (error) {
+      if (revision !== updateRevision) return;
+      autoCheckAfter = Date.now() + 3600000;
+      if (!automatic)
+        result.textContent = "暂时无法检查更新。 " + error.message;
+    } finally {
+      checkingUpdate = false;
+      button.disabled = false;
+    }
+  }
+  for (const id of ["app-update-open", "app-update-notice-open"]) {
+    $(id).addEventListener("click", () => {
+      $("library-tools-dialog").showModal();
+      $("library-update-section").scrollIntoView({ block: "start" });
+      void run($(id), status);
+      if (id === "app-update-open") void checkUpdate(false);
+    });
+  }
+  window.AniBTRuntime.register("program-update", () => checkUpdate(true), {
+    intervalMs: 3600000,
+  });
+  setTimeout(() => void checkUpdate(true), 3000);
   $("automatic-backup-settings").addEventListener(
     "click",
     () =>
@@ -196,19 +241,16 @@
         await api("library/update-source", {
           repository: $("library-update-repository").value.trim(),
         });
+        updateRevision++;
+        autoCheckAfter = 0;
+        $("app-update-notice").classList.add("hidden");
+        text("library-update-result", "");
         toast("更新来源已保存。");
       }),
   );
   $("library-update-check").addEventListener(
     "click",
-    () =>
-      void run($("library-update-check"), async () => {
-        text("library-update-result", "正在检查…");
-        const r = await api("library/check-update", {});
-        $("library-update-result").innerHTML = !r.configured
-          ? "尚未配置线上发布仓库，当前无法判断最新版。"
-          : `<p>${r.newer ? "发现新版 v" + escape(r.latestVersion) : "已配置仓库的最新稳定版本为 v" + escape(r.latestVersion) + "，当前无需升级。"}</p><a href="${escape(r.url)}" target="_blank" rel="noopener noreferrer">查看发布页 ↗</a><pre class="release-notes">${escape(r.notes)}</pre>`;
-      }),
+    () => void checkUpdate(false),
   );
   $("library-diagnostics-preview").addEventListener(
     "click",

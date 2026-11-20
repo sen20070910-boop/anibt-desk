@@ -23,11 +23,7 @@ import {
   clearReviewDraft,
   readDrafts,
 } from "./review-drafts.js";
-import {
-  APP_VERSION,
-  normalizeRepository,
-  releaseInformation,
-} from "./release-info.js";
+import { APP_VERSION, createReleaseChecker } from "./release-info.js";
 import { watchHealthStatus } from "./watch-health.js";
 import { createSourceNetwork } from "./source-network.js";
 import http from "node:http";
@@ -337,12 +333,67 @@ export function describeItems(
     };
   });
 }
+const guiAssetNames = {
+  "/": "index.html",
+  "/app.js": "app.js",
+  "/settings.js": "settings.js",
+  "/status.js": "status.js",
+  "/performance.js": "performance.js",
+  "/motion.js": "motion.js",
+  "/motion.css": "motion.css",
+  "/overview-twilight.webp": "overview-twilight.webp",
+  "/refined.css": "refined.css",
+  "/morph.css": "morph.css",
+  "/apple.css": "apple.css",
+  "/apple.js": "apple.js",
+  "/operation-recovery.js": "operation-recovery.js",
+  "/queue.js": "queue.js",
+  "/morph.js": "morph.js",
+  "/covers.js": "covers.js",
+  "/backfill.js": "backfill.js",
+  "/history.js": "history.js",
+  "/discover.js": "discover.js",
+  "/anibt.js": "anibt.js",
+  "/help.js": "help.js",
+  "/workbench.js": "workbench.js",
+  "/reviews.js": "reviews.js",
+  "/library-tools.js": "library-tools.js",
+  "/episode-actions.js": "episode-actions.js",
+  "/resources.js": "resources.js",
+  "/overview.js": "overview.js",
+  "/maintenance.js": "maintenance.js",
+  "/improvements.js": "improvements.js",
+  "/session.js": "session.js",
+  "/history-actions.js": "history-actions.js",
+  "/settings-defaults.js": "settings-defaults.js",
+  "/theme.js": "theme.js",
+  "/style.css": "style.css",
+  "/icon.svg": "icon.svg",
+};
+
+function readGuiAssets(uiRoot) {
+  const assets = new Map();
+  for (const [url, name] of Object.entries(guiAssetNames)) {
+    try {
+      assets.set(url, {
+        name,
+        content: fs.readFileSync(path.join(uiRoot, name)),
+      });
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return assets;
+}
+
 export function makeApplication({
   configFile,
   token = randomBytes(32).toString("hex"),
   uiRoot = path.join(root, "ui"),
   deps = {},
 }) {
+  // Pin the frontend to this server process so replacing files on disk cannot mix versions.
+  const assets = readGuiAssets(uiRoot);
   const stateStore = createStateStore(configFile);
   const snapshots = localSnapshots(configFile);
   const atomicWrite = (file, value) => stateStore.write(file, value);
@@ -961,7 +1012,18 @@ export function makeApplication({
     });
     res.end(JSON.stringify(value));
   }
+  const updateFile = path.join(
+    path.dirname(configFile),
+    "data/library-tools.json",
+  );
+  const releaseChecker = createReleaseChecker({
+    read: () => readJsonFile(updateFile, {}),
+    write: (value) => atomicWrite(updateFile, value),
+    network: deps.updateNetwork || createSourceNetwork(preferences),
+  });
+
   const serviceContext = {
+    root,
     get stateStore() {
       return stateStore;
     },
@@ -1189,50 +1251,14 @@ export function makeApplication({
       return;
     }
     if (!u.pathname.startsWith("/api/")) {
-      const names = {
-        "/": "index.html",
-        "/app.js": "app.js",
-        "/settings.js": "settings.js",
-        "/status.js": "status.js",
-        "/performance.js": "performance.js",
-        "/motion.js": "motion.js",
-        "/motion.css": "motion.css",
-        "/overview-twilight.webp": "overview-twilight.webp",
-        "/refined.css": "refined.css",
-        "/morph.css": "morph.css",
-        "/apple.css": "apple.css",
-        "/apple.js": "apple.js",
-        "/operation-recovery.js": "operation-recovery.js",
-        "/queue.js": "queue.js",
-        "/morph.js": "morph.js",
-        "/covers.js": "covers.js",
-        "/backfill.js": "backfill.js",
-        "/history.js": "history.js",
-        "/discover.js": "discover.js",
-        "/anibt.js": "anibt.js",
-        "/help.js": "help.js",
-        "/workbench.js": "workbench.js",
-        "/reviews.js": "reviews.js",
-        "/library-tools.js": "library-tools.js",
-        "/episode-actions.js": "episode-actions.js",
-        "/resources.js": "resources.js",
-        "/overview.js": "overview.js",
-        "/maintenance.js": "maintenance.js",
-        "/improvements.js": "improvements.js",
-        "/session.js": "session.js",
-        "/history-actions.js": "history-actions.js",
-        "/settings-defaults.js": "settings-defaults.js",
-        "/theme.js": "theme.js",
-        "/style.css": "style.css",
-        "/icon.svg": "icon.svg",
-      };
-      if (req.method !== "GET" || !names[u.pathname]) {
+      const asset = assets.get(u.pathname);
+      if (req.method !== "GET" || !asset) {
         res.writeHead(404);
         res.end();
         return;
       }
       try {
-        const name = names[u.pathname],
+        const { name } = asset,
           mime = name.endsWith(".html")
             ? "text/html"
             : name.endsWith(".js")
@@ -1242,7 +1268,7 @@ export function makeApplication({
                 : name.endsWith(".webp")
                   ? "image/webp"
                   : "text/css";
-        let content = fs.readFileSync(path.join(uiRoot, name));
+        let { content } = asset;
         if (name === "index.html")
           content = content
             .toString("utf8")
@@ -1476,11 +1502,8 @@ export function makeApplication({
           backups: listAutomaticBackups(configFile),
           continuity: continuityStatus(configFile),
           version: APP_VERSION,
-          repository:
-            readJsonFile(
-              path.join(path.dirname(configFile), "data/library-tools.json"),
-              {},
-            ).repository || "",
+          repository: releaseChecker.settings().repository,
+          repositoryOverride: releaseChecker.settings().override,
         });
         return;
       }
@@ -1506,36 +1529,18 @@ export function makeApplication({
         return;
       }
       if (route === "POST /api/library/update-source") {
-        const repository = normalizeRepository(body.repository);
-        atomicWrite(
-          path.join(path.dirname(configFile), "data/library-tools.json"),
-          { repository },
+        const { repository, override } = releaseChecker.setRepository(
+          body.repository,
         );
-        json(res, 200, { repository });
+        json(res, 200, { repository, override });
         return;
       }
       if (route === "POST /api/library/check-update") {
-        const repository = normalizeRepository(
-          readJsonFile(
-            path.join(path.dirname(configFile), "data/library-tools.json"),
-            {},
-          ).repository || "",
+        json(
+          res,
+          200,
+          await releaseChecker.check({ force: body.automatic !== true }),
         );
-        if (!repository) {
-          json(res, 200, { configured: false, currentVersion: APP_VERSION });
-          return;
-        }
-        const response = await (
-          deps.updateNetwork || createSourceNetwork(preferences)
-        ).read(
-          "https://api.github.com/repos/" + repository + "/releases/latest",
-          { maxBytes: 512000 },
-        );
-        const payload = JSON.parse(response.text);
-        json(res, 200, {
-          configured: true,
-          ...releaseInformation(payload, repository),
-        });
         return;
       }
       if (route === "GET /api/library/diagnostics") {
@@ -1939,28 +1944,43 @@ export async function startGui({
   const windowPath = background ? "/?background=1&page=downloads" : "/";
   const directory = path.join(path.dirname(configFile), "data");
   const descriptor = path.join(directory, "gui.json");
+  const lockFile = path.join(directory, "gui.lock");
+  let existing;
   try {
     const info = JSON.parse(fs.readFileSync(descriptor, "utf8"));
     const r = await fetch(`http://127.0.0.1:${info.port}/api/ping`, {
       headers: { "X-App-Token": info.token },
       signal: AbortSignal.timeout(1500),
     });
-    if (r.ok && (await r.json()).app === "anibt-qb-gui") {
-      if (open)
-        openWindow(
-          `http://127.0.0.1:${info.port}${windowPath}#token=${info.token}`,
-        );
-      return;
+    if (r.ok) {
+      const ping = await r.json();
+      if (ping.app === "anibt-qb-gui")
+        existing = { ...info, version: ping.version };
     }
   } catch {}
-  const release = lock(path.join(directory, "gui.lock"));
-  let close;
-  const app = makeApplication({
-    configFile,
-    deps: { onIdle: () => close?.() },
-  });
-  const server = http.createServer(app.handler);
+  if (existing?.version === APP_VERSION) {
+    if (open)
+      openWindow(
+        `http://127.0.0.1:${existing.port}${windowPath}#token=${existing.token}`,
+      );
+    return;
+  }
+  if (existing) {
+    // Closing the last window lets the old process finish any active operation and exit on its own.
+    if (open && !background) {
+      const deadline = Date.now() + 32000;
+      while (fs.existsSync(lockFile) && Date.now() < deadline) await sleep(250);
+    }
+    if (fs.existsSync(lockFile))
+      throw new Error(
+        "另一个版本的 AniBT 界面仍在运行。请保存并关闭所有 AniBT 窗口，等待约 30 秒后重开。",
+      );
+  }
+  const release = lock(lockFile);
+  let close, app, server;
   try {
+    app = makeApplication({ configFile, deps: { onIdle: () => close?.() } });
+    server = http.createServer(app.handler);
     await new Promise((resolve, reject) => {
       server.once("error", reject);
       server.listen(0, "127.0.0.1", resolve);
@@ -1980,13 +2000,18 @@ export async function startGui({
   automaticBackupTimer.unref();
   const port = server.address().port;
   atomicWrite(descriptor, { port, pid: process.pid, token: app.token });
+  let closing = false;
   close = () => {
+    if (closing) return;
+    closing = true;
     clearInterval(automaticBackupTimer);
-    try {
-      fs.unlinkSync(descriptor);
-    } catch {}
-    release();
-    server.close(() => process.exit(0));
+    server.close(() => {
+      try {
+        fs.unlinkSync(descriptor);
+      } catch {}
+      release();
+      process.exit(0);
+    });
   };
   process.on("SIGINT", close);
   process.on("SIGTERM", close);

@@ -2,6 +2,7 @@ import { loadState, statePath, lock } from "../runner.js";
 import { readMaintenance, afterCleanup } from "../maintenance.js";
 import path from "node:path";
 import { inspectHistory, openHistoryFolder } from "../history-actions.js";
+import { createSubtitleProbe } from "../media-subtitles.js";
 import { QbClient } from "../qb.js";
 import { submitAgain, resetCompletion } from "../reprocessing.js";
 import { own } from "../dictionary.js";
@@ -25,6 +26,8 @@ import {
 export function createDownloadRoutes(ctx) {
   const filePreviews = new Map();
   const previewRequests = new Map();
+  const probe =
+    ctx.deps.subtitleProbe || createSubtitleProbe(ctx.root, ctx.configFile);
   return async function handle({ route, req, res, body, u }) {
     if (route === "POST /api/history/clear") {
       ctx.requireIdle();
@@ -61,7 +64,8 @@ export function createDownloadRoutes(ctx) {
     }
     if (
       route === "GET /api/history/task" ||
-      route === "POST /api/history/open-folder"
+      route === "POST /api/history/open-folder" ||
+      route === "POST /api/history/subtitles"
     ) {
       const c = ctx.getConfig(),
         key = req.method === "GET" ? u.searchParams.get("key") : body.key,
@@ -93,11 +97,26 @@ export function createDownloadRoutes(ctx) {
         }
       } else row = history.find((r) => ctx.historyKey(r) === key);
       if (!row) throw new Error("任务或记录已变化，请刷新下载状态。");
+      const readSubtitles = route === "POST /api/history/subtitles";
+      if (
+        readSubtitles &&
+        (!Number.isInteger(body.index) || body.index < 0 || body.index >= 2000)
+      )
+        throw new Error("请从当前任务中选择一个已下载的视频文件。");
       const info = await inspectHistory(
         row,
         c,
         ctx.deps.historyQb || new QbClient(c),
+        readSubtitles ? { probe, subtitleIndex: body.index } : undefined,
       );
+      if (readSubtitles) {
+        if (!info.embeddedSubtitles)
+          throw new Error(
+            "这份视频尚未下载完成，或已无法在本机访问。请刷新任务详情。",
+          );
+        ctx.json(res, 200, info.embeddedSubtitles);
+        return;
+      }
       const completion = ctx.readJsonFile(
         path.join(path.dirname(ctx.configFile), "data/completions.json"),
         { tasks: {} },
