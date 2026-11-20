@@ -190,6 +190,20 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 .discovery-alias-tools .inline-check {font-size: 12px;}
 .discovery-alias-tools small {font-size: 12px;overflow-wrap: anywhere;}
 
+.discovery-dialog.is-batch .discovery-selected-meta,
+.discovery-dialog.is-batch .discovery-source-links,
+.discovery-dialog.is-batch .discovery-file-section,
+.discovery-dialog.is-batch #discovery-subtitles-read {
+  display: none;
+}
+#discovery-batch-status {
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.discovery-variant .discovery-batch-outcome {
+  color: var(--ink);
+}
 .discovery-file-section {
   margin: 16px 0;
   padding: 14px;
