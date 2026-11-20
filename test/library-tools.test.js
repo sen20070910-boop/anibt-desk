@@ -55,3 +55,20 @@ test('official release checking works without configuration and reuses its daily
  checker.setRepository('');
  assert.equal(checker.settings().repository, OFFICIAL_REPOSITORY);
 });
+
+test('when the GitHub API is rate-limited, the public latest redirect supplies the stable release', async () => {
+ const { createReleaseChecker, OFFICIAL_REPOSITORY } = await import('../src/release-info.js');
+ const path = '/' + OFFICIAL_REPOSITORY;
+ const attempted = [];
+ const newChecker = location => createReleaseChecker({ read:()=>({}), write:()=>{}, network: { read:async (url, options)=>{
+   attempted.push(url);
+   if (url.startsWith('https://api.github.com/')) throw Error('HTTP 403');
+   assert.equal(options.releaseRedirect, true);
+   return {location};
+ } } });
+ const release = await newChecker(path + '/releases/tag/v999.0.0').check({force:true});
+ assert.equal(release.newer, true);
+ assert.equal(release.url,'https://github.com' + path + '/releases/tag/v999.0.0');
+ assert.deepEqual(attempted, ['https://api.github.com/repos' + path + '/releases/latest','https://github.com' + path + '/releases/latest']);
+ await assert.rejects(() => newChecker('https://example.test' + path + '/releases/tag/v999.0.0').check(), /发布页面地址不符/);
+});

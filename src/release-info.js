@@ -67,6 +67,27 @@ export function createReleaseChecker({ read, write, network, now = Date.now }) {
     write({ repository });
     return settings();
   };
+  async function fetchRelease(repository) {
+    const endpoint = "/" + repository + "/releases/latest";
+    let response;
+    try {
+      response = await network.read("https://api.github.com/repos" + endpoint, {
+        maxBytes: 512000,
+        timeoutMs: 6000,
+      });
+    } catch {
+      // The public website has a separate quota from the unauthenticated API.
+      const latest = "https://github.com" + endpoint;
+      const { location } = await network.read(latest, {
+        releaseRedirect: true,
+        timeoutMs: 6000,
+      });
+      const url = new URL(location, latest);
+      const tag = url.pathname.split("/").at(-1);
+      return { tag_name: tag, html_url: url.href };
+    }
+    return JSON.parse(response.text);
+  }
   async function check({ force = false } = {}) {
     const { repository, last } = settings();
     if (
@@ -85,14 +106,7 @@ export function createReleaseChecker({ read, write, network, now = Date.now }) {
     }
     if (!pending.has(repository)) {
       const work = (async () => {
-        const response = await network.read(
-          "https://api.github.com/repos/" + repository + "/releases/latest",
-          {
-            maxBytes: 512000,
-            timeoutMs: 6000,
-          },
-        );
-        const payload = JSON.parse(response.text);
+        const payload = await fetchRelease(repository);
         const info = releaseInformation(payload, repository);
         const current = settings();
         if (current.repository === repository) {
