@@ -3,7 +3,9 @@ import { readMaintenance, afterCleanup } from "../maintenance.js";
 import path from "node:path";
 import { inspectHistory, openHistoryFolder } from "../history-actions.js";
 import { createSubtitleProbe } from "../media-subtitles.js";
-import { QbClient } from "../qb.js";
+import { QbClient, sleep } from "../qb.js";
+import { readQbFiles } from "../qb-files.js";
+import { digest } from "../episode-actions.js";
 import { submitAgain, resetCompletion } from "../reprocessing.js";
 import { own } from "../dictionary.js";
 import { defaults, clone } from "../config.js";
@@ -29,6 +31,13 @@ export function createDownloadRoutes(ctx) {
   const previewRequests = new Map();
   const probe =
     ctx.deps.subtitleProbe || createSubtitleProbe(ctx.root, ctx.configFile);
+  const manifestVersion = files => digest(files.map(({ index, name, size, priority }) => [index, name, size, priority]));
+  async function existingSelection(qb, hash) {
+    const task = (await qb.list()).find(row => row.hash?.toLowerCase() === hash);
+    if (!task) throw new Error("qB 中已没有这个下载任务，请刷新后重新添加。");
+    const files = await readQbFiles(qb, hash);
+    return { task, files };
+  }
   return async function handle({ route, req, res, body, u }) {
     if (route === "POST /api/history/clear") {
       ctx.requireIdle();
@@ -530,6 +539,51 @@ export function createDownloadRoutes(ctx) {
         200,
         await ctx.discoveryTaskPresence(hashes, body.refresh === true),
       );
+      return;
+    }
+    if (route === "POST /api/discover/selection" || route === "POST /api/discover/selection/apply") {
+      const resultId = String(body.resultId || "");
+      const registered = ctx.discovery.peek(resultId);
+      const hash = registered.infoHash || (await ctx.discovery.resolve(resultId)).infoHash;
+      if (route.endsWith("/apply")) {
+        if (!Array.isArray(body.indices) || !body.indices.length || body.indices.length > 3000 ||
+            body.indices.some(index => !Number.isSafeInteger(index) || index < 0) ||
+            !/^[a-f0-9]{64}$/.test(body.version ?? ""))
+          throw new Error("请先核对并补选文件。");
+        const added = await ctx.downloadMutation("extend-file-selection", async qb => {
+          const { files, task } = await existingSelection(qb, hash);
+          if (manifestVersion(files) !== body.version)
+            throw Object.assign(new Error("qB 文件勾选已变化，请重新读取后补选。"), { status: 409 });
+          const indices = [...new Set(body.indices)];
+          const available = new Set(files.filter(file => file.priority === 0).map(file => file.index));
+          if (indices.some(index => !available.has(index))) throw new Error("只能补选当前未选择的文件。");
+          await qb.request("torrents/filePrio", new URLSearchParams({
+            hash, id: indices.join("|"), priority: "1",
+          }));
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const updated = new Map((await readQbFiles(qb, hash)).map(file => [file.index, file.priority]));
+            if (indices.every(index => updated.get(index) > 0)) {
+              ctx.qbCache = null;
+              return { added: indices.length, stopped: /^(?:stopped|paused)/i.test(task.state || "") };
+            }
+            if (attempt < 2) await sleep(160);
+          }
+          throw new Error("qB 尚未确认勾选结果，请重新读取清单核对。");
+        }, ctx.deps.manualQb || ctx.deps.discoveryFileQb);
+        ctx.json(res, 200, added);
+        return;
+      }
+      const qb = ctx.deps.manualQb || ctx.deps.discoveryFileQb || new QbClient(ctx.getConfig());
+      try {
+        await qb.login();
+        const { task, files } = await existingSelection(qb, hash);
+        const classified = classifyDiscoveryFiles(files.map(file => ({ path: file.name.replaceAll("\\", "/"), size: file.size })));
+        ctx.json(res, 200, {
+          version: manifestVersion(files),
+          stopped: /^(?:stopped|paused)/i.test(task.state || ""),
+          files: classified.map((file, i) => ({ ...file, index: files[i].index, priority: files[i].priority, progress: files[i].progress })),
+        });
+      } finally { await qb.logout(); }
       return;
     }
     if (route === "POST /api/discover/files") {

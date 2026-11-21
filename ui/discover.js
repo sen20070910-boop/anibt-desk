@@ -2,7 +2,7 @@
 const sourceLabel = Object.fromEntries([...document.querySelectorAll('#page-discover [data-source]')]
   .map(button => [button.dataset.source, button.textContent.trim()]));
 const D={pathEdited:false,pathLoading:false,pathError:'',pathRequest:0,suppressPath:false,progressTarget:null,items:[],providers:[],sources:new Set(Object.keys(sourceLabel)),view:'releases',shown:24,loaded:false,busy:false,adding:false,selected:null,variants:[],present:new Set(),tasksRequest:0};
-const discoveryFiles = { request: 0, loading: false, preview: null, selected: new Set() };
+const discoveryFiles = { request: 0, loading: false, preview: null, selected: new Set(), manage: false };
 const discoveryBatch = { active: false, stop: false, selected: new Set(), outcomes: new Map(), status: '' };
 const discoveryBatchLimit = 50;
 const discoveryFileLabels = {
@@ -15,6 +15,11 @@ function resetDiscoveryFiles() {
   discoveryFiles.loading = false;
   discoveryFiles.preview = null;
   discoveryFiles.selected.clear();
+  discoveryFiles.manage = false;
+  $('discovery-dialog').classList.remove('is-managing');
+  text('discovery-files-title', '选择文件');
+  text('discovery-files-recommend', '推荐选择');
+  text('discovery-files-clear', '取消全选');
   $('discovery-files-read').textContent = '读取文件清单';
   $('discovery-files-read').disabled = !D.selected?.downloadable;
   $('discovery-files-controls').classList.add('hidden');
@@ -28,6 +33,16 @@ function updateDiscoveryFileSummary() {
   const files = discoveryFiles.preview.files;
   const total = files.reduce((sum, file) => sum + file.size, 0);
   const chosen = files.filter(file => discoveryFiles.selected.has(file.index));
+  if (discoveryFiles.manage) {
+    const finished = files.filter(file => file.priority > 0 && file.progress === 1).length;
+    const unselected = files.filter(file => file.priority === 0).length;
+    const remaining = chosen.reduce((sum, file) => sum + Math.ceil(file.size * (1 - file.progress)), 0);
+    text('discovery-files-summary', '已完成 ' + finished + ' 个文件 · 尚未勾选 ' + unselected
+      + ' 个 · 本次补选 ' + chosen.length + ' 个，预计多下 ' + bytes(remaining)
+      + (discoveryFiles.preview.stopped ? '。任务已暂停，可在 qB 手动开始。' : '。'));
+    updateDiscoverAddButton();
+    return;
+  }
   const size = chosen.reduce((sum, file) => sum + file.size, 0);
   text('discovery-files-summary', '已选 ' + chosen.length + ' / ' + files.length + ' 个文件 · ' + bytes(size)
     + ' / ' + bytes(total) + (chosen.length ? '' : ' · 请至少选择一个文件'));
@@ -36,23 +51,30 @@ function updateDiscoveryFileSummary() {
 
 function updateDiscoveryFilePreset(mode) {
   discoveryFiles.selected = new Set(discoveryFiles.preview.files
-    .filter(file => mode === 'all' || (mode === 'recommend' && file.recommended)).map(file => file.index));
+    .filter(file => (!discoveryFiles.manage || file.priority === 0) && (mode === 'all' || (mode === 'recommend' && file.recommended))).map(file => file.index));
   for (const field of $('discovery-files-list').querySelectorAll('input')) {
-    field.checked = discoveryFiles.selected.has(Number(field.dataset.fileIndex));
+    if (!field.disabled) field.checked = discoveryFiles.selected.has(Number(field.dataset.fileIndex));
   }
   updateDiscoveryFileSummary();
 }
 
-async function loadDiscoveryFiles() {
+async function loadDiscoveryFiles(manage = false) {
   const item = D.selected;
   if (!item?.downloadable || D.adding || discoveryFiles.loading) return;
   resetDiscoveryFiles();
+  discoveryFiles.manage = manage;
+  text('discovery-files-title', manage ? '管理已选文件' : '选择文件');
+  if (manage) {
+    $('discovery-dialog').classList.add('is-managing');
+    text('discovery-files-recommend', '推荐补选');
+    text('discovery-files-clear', '撤销本次勾选');
+  }
   const request = discoveryFiles.request;
   discoveryFiles.loading = true;
   $('discovery-files-read').disabled = true;
   text('discovery-files-summary', '正在读取文件清单。磁力链接可能需要等待做种者返回清单…');
   try {
-    const preview = await api('discover/files', { resultId: item.resultId });
+    const preview = await api(manage ? 'discover/selection' : 'discover/files', { resultId: item.resultId });
     if (request !== discoveryFiles.request || !$('discovery-dialog').open) return;
     discoveryFiles.preview = preview;
     const sidecars = preview.files.filter(file => file.kind === 'subtitle');
@@ -72,12 +94,14 @@ async function loadDiscoveryFiles() {
       if (!files) return '';
       return '<section class="discovery-file-group"><h5>' + label + ' · ' + files.length + '</h5>'
         + files.map(file => '<label class="discovery-file-row"><input type="checkbox" data-file-index="' + file.index
-          + '"><span>' + escape(file.path) + (file.language ? ' <small>· ' + escape(file.language) + '</small>' : '')
+          + '"' + (manage && file.priority > 0 ? ' checked disabled' : '')
+          + '><span>' + escape(file.path) + (file.language ? ' <small>· ' + escape(file.language) + '</small>' : '')
+          + (manage ? ' <small>· ' + (file.priority === 0 ? '未选' : file.progress === 1 ? '已完成' : '已选 · ' + Math.round(file.progress * 100) + '%') + '</small>' : '')
           + '</span><small>' + escape(bytes(file.size)) + '</small></label>').join('') + '</section>';
     }).join('');
     $('discovery-files-list').classList.remove('hidden');
     $('discovery-files-controls').classList.remove('hidden');
-    updateDiscoveryFilePreset('recommend');
+    updateDiscoveryFilePreset(manage ? 'clear' : 'recommend');
   } catch (error) {
     if (request === discoveryFiles.request) {
       text('discovery-files-summary', error.message === '没有找到此功能。'
@@ -104,7 +128,8 @@ $('discovery-files-list').addEventListener('change', event => {
   else discoveryFiles.selected.delete(index);
   updateDiscoveryFileSummary();
 });
-$('discovery-files-read').addEventListener('click', guarded(loadDiscoveryFiles));
+$('discovery-files-read').addEventListener('click', guarded(() =>
+  loadDiscoveryFiles(discoveryFiles.manage || (D.selected && isDiscoveredPresent(D.selected) && !D.progressTarget))));
 $('discovery-dialog').addEventListener('close', () => { discoveryFiles.request++; });
 const discoveryLanguageNames = new Intl.DisplayNames('zh-CN', { type: 'language', fallback: 'none' });
 const specialSubtitleNames = new Map([['CHS','简中'],['CHT','繁中'],['ZH','中文（简繁未标注）'],['EN','英文']]);
@@ -131,13 +156,24 @@ function subtitleBadge(items) {
   const detail = subtitleLabel(items);
   return '<span class="pill '+(detail.simplified?'green':'gray')+'" title="'+escape(detail.title||'下载后可读取实际内封字幕轨')+'">'+escape(detail.label)+'</span>';
 }
+function seaDexBadge(items) {
+  const rank = items.some(item => item.seadexRating === 'best') ? 'SeaDex 首选'
+    : items.some(item => item.seadexRating === 'alt') ? 'SeaDex 备选' : '';
+  return rank ? '<span class="pill gray">' + rank + '</span>' : '';
+}
+function discoveryAudioText(item) {
+  const audio = subtitleNames(item.audioLanguages || []);
+  return audio ? '音轨 · ' + audio : '';
+}
 function refreshSelectedSubtitleMetadata() {
   const item = D.selected;
   if (!item) return;
   $('discovery-selected-meta').innerHTML = subtitleBadge([item])
     + '<span class="pill gray">'+escape(item.resolution||'画质未标注')+'</span>'
     + '<span class="pill gray">'+escape(item.sizeText||'体积未提供')+'</span>'
-    + '<span class="pill gray">'+(item.seeders==null?'做种数未提供':'做种 '+item.seeders)+'</span>';
+    + '<span class="pill gray">'+(item.seeders==null?'做种数未提供':'做种 '+item.seeders)+'</span>'
+    + seaDexBadge([item])
+    + (discoveryAudioText(item) ? '<span class="pill gray">' + escape(discoveryAudioText(item)) + '</span>' : '');
   const button = $('discovery-subtitles-read');
   button.classList.toggle('hidden', !item.subtitleLookup);
   button.disabled = !!item.subtitleLoading;
@@ -193,50 +229,119 @@ async function refreshDiscoveryTasks(force = false) {
 }
 function sourceTags(item){return item.sources.map(source=>`<span class="source-tag source-${source}">${escape(sourceLabel[source]||source)}</span>`).join('');}
 function renderSourceSelection(){for(const button of document.querySelectorAll('[data-source]')){const chosen=D.sources.has(button.dataset.source);button.classList.toggle('selected',chosen);button.setAttribute('aria-pressed',String(chosen));}}
-function renderProviders(){const states={ok:'已连接',fallback:'已关联公开发行',error:'连接失败','browser-required':'需浏览器验证'};$('discovery-providers').innerHTML=D.providers.map(p=>`<div class="provider-status ${p.state==='ok'?'online':p.state==='fallback'?'fallback':'offline'}"><span class="tiny-dot"></span><strong>${escape(p.name)}</strong><span>${escape(states[p.state]||p.state)}</span><small>${p.count} 条${p.via?' · '+escape(p.via):''}</small></div>`).join('');const warnings=D.providers.filter(p=>p.message).map(p=>p.name+'：'+p.message);text('discovery-notice',warnings.join(' '));$('discovery-notice').classList.toggle('hidden',!warnings.length);}
+function renderProviders() {
+  const states = { pending: '正在搜索', ok: '已连接', fallback: '已关联公开发行',
+    error: '连接失败', 'browser-required': '需浏览器验证' };
+  $('discovery-providers').innerHTML = D.providers.map(p => `<div class="provider-status ${p.state === 'ok' ? 'online' : p.state === 'fallback' ? 'fallback' : p.state === 'pending' ? 'pending' : 'offline'}">
+    <span class="tiny-dot"></span><strong>${escape(p.name)}</strong><span>${escape(states[p.state] || p.state)}</span>
+    <small>${p.count == null ? '' : p.count + ' 条'}${p.via ? ' · ' + escape(p.via) : ''}</small>
+    ${p.state === 'error' ? '<button type="button" class="text-button" data-retry-source="' + escape(p.source) + '">重试</button>' : ''}
+  </div>`).join('');
+  const warnings = D.providers.filter(p => p.message).map(p => p.name + '：' + p.message);
+  text('discovery-notice', warnings.join(' '));
+  $('discovery-notice').classList.toggle('hidden', !warnings.length);
+}
 function filteredDiscoverItems(){let items=D.items.filter(item=>($('discovery-language').value!=='chs'||item.languages.includes('CHS'))&&(!$('discovery-resolution').value||item.resolution===$('discovery-resolution').value||$('discovery-resolution').value==='2160p'&&item.resolution==='4k'));const sort=$('discovery-sort').value,prefer=$('discovery-language').value==='prefer';items.sort((a,b)=>(prefer?Number(b.languages.includes('CHS'))-Number(a.languages.includes('CHS')):0)||(sort==='seeders'?(b.seeders??-1)-(a.seeders??-1):sort==='size'?(b.sizeBytes||0)-(a.sizeBytes||0):sort==='title'?a.workTitle.localeCompare(b.workTitle,'zh-CN'):(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0)));return items;}
 function workGroups(items){const grouped=new Map();for(const item of items){const key=norm(item.workTitle||item.title).replace(/\s+/g,' ');if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(item);}return[...grouped.values()];}
-function resultCard(items,index){const item=items[0],project=D.view==='projects';const sources=[...new Set(items.flatMap(i=>i.sources))];const added=items.every(isDiscoveredPresent);const sourceItem={sources};return`<article class="resource-card"><div class="resource-card-top"><span class="resource-mark">${project?icon('library'):icon('download')}</span><div class="resource-sources">${sourceTags(sourceItem)}</div>${added?'<span class="badge success">已在 qB</span>':''}</div><h3 title="${escape(project?item.workTitle:item.title)}">${escape(project?item.workTitle:item.title)}</h3><div class="resource-attributes">${subtitleBadge(items)}${item.resolution?`<span class="pill gray">${escape(item.resolution)}</span>`:''}${project?`<span class="pill gray">${items.length} 个发行版本</span>`:''}</div><p class="resource-group">${escape([...new Set(items.map(i=>i.groupName).filter(Boolean))].join(' · ')||'发布组未标注')}</p><div class="resource-card-bottom"><div><strong>${project&&items.length>1?'多个版本':escape(item.sizeText||'体积未提供')}</strong><small>${item.seeders==null?'做种数未提供':'做种 '+item.seeders}${item.publishedAt?' · '+date(item.publishedAt):''}</small></div><button class="button secondary" data-discover-index="${index}">${project?'选择版本':'查看并添加'} ${icon('chevron')}</button></div></article>`;}
+function resultCard(items,index){const item=items[0],project=D.view==='projects';const sources=[...new Set(items.flatMap(i=>i.sources))];const added=items.every(isDiscoveredPresent);const sourceItem={sources};return`<article class="resource-card"><div class="resource-card-top"><span class="resource-mark">${project?icon('library'):icon('download')}</span><div class="resource-sources">${sourceTags(sourceItem)}</div>${added?'<span class="badge success">已在 qB</span>':''}</div><h3 title="${escape(project?item.workTitle:item.title)}">${escape(project?item.workTitle:item.title)}</h3><div class="resource-attributes">${subtitleBadge(items)}${seaDexBadge(items)}${item.resolution?`<span class="pill gray">${escape(item.resolution)}</span>`:''}${project?`<span class="pill gray">${items.length} 个发行版本</span>`:''}</div><p class="resource-group">${escape([...new Set(items.map(i=>i.groupName).filter(Boolean))].join(' · ')||'发布组未标注')}</p><div class="resource-card-bottom"><div><strong>${project&&items.length>1?'多个版本':escape(item.sizeText||'体积未提供')}</strong><small>${item.seeders==null?'做种数未提供':'做种 '+item.seeders}${item.publishedAt?' · '+date(item.publishedAt):''}</small></div><button class="button secondary" data-discover-index="${index}">${project?'选择版本':'查看并添加'} ${icon('chevron')}</button></div></article>`;}
 function renderDiscover(){const items=filteredDiscoverItems();const groups=D.view==='projects'?workGroups(items):items.map(i=>[i]);D.renderedGroups=groups;text('discovery-result-title',D.view==='projects'?'作品与发行版本':'跨站发行资源');text('discovery-result-count',D.loaded?`${groups.length} ${D.view==='projects'?'部作品':'份资源'} · 同种子已合并来源`:'选择来源，搜索喜欢的作品');const results=$('discovery-results');
-if(D.busy){results.innerHTML=loadingResults('正在搜索资源…','各来源独立连接，单个来源暂不可用时仍会显示其他结果。');$('discovery-more').classList.add('hidden');return;}
+if(!items.length&&D.providers.some(provider => provider.state === 'pending')){results.innerHTML=loadingResults('正在搜索资源…','各来源独立连接，单个来源暂不可用时仍会显示其他结果。');$('discovery-more').classList.add('hidden');return;}
 const wasLoading=results.firstElementChild?.classList.contains('discovery-loading');
 results.innerHTML=groups.length?groups.slice(0,D.shown).map(resultCard).join(''):empty(D.loaded?'还没有找到符合条件的资源':'从一个喜欢的名字开始',D.loaded?'可以试试英文名、日文名、压制组名，或调整画质和字幕筛选。':'搜索新番、老番、合集和 VCB-S 发行作品，选好版本后直接加入 qBittorrent。','search');$('discovery-more').classList.toggle('hidden',groups.length<=D.shown);
 if(wasLoading)window.AniBTMotion?.results(results,'.resource-card');
 }
+function mergeDiscoveryPages(pages) {
+  const byRelease = new Map();
+  for (const item of pages.flat()) {
+    const key = item.infoHash || item.links[0]?.url || item.resultId;
+    const old = byRelease.get(key);
+    if (!old) {
+      byRelease.set(key, item);
+      continue;
+    }
+    // Submit through the result that can also verify the simplified subtitle tag.
+    const primary = item.languages.includes('CHS') && !old.languages.includes('CHS') ? item : old;
+    const links = [...new Map([...old.links, ...item.links].map(link => [link.url, link])).values()];
+    const seeders = Math.max(old.seeders ?? -1, item.seeders ?? -1);
+    byRelease.set(key, {
+      ...primary, links, sources: [...new Set([...old.sources, ...item.sources])],
+      languages: [...new Set([...old.languages, ...item.languages])],
+      audioLanguages: [...new Set([...(old.audioLanguages || []), ...(item.audioLanguages || [])])],
+      seadexRating: old.seadexRating === 'best' || item.seadexRating === 'best' ? 'best' : old.seadexRating || item.seadexRating,
+      seeders: seeders < 0 ? null : seeders,
+    });
+  }
+  return [...byRelease.values()].sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0));
+}
+
+async function readDiscoveryProvider(search, source, force) {
+  const index = search.sources.indexOf(source);
+  D.providers[index] = { source, name: sourceLabel[source], state: 'pending' };
+  renderProviders();
+  try {
+    const params = new URLSearchParams({ q: search.query, sources: source, fuzzy: search.fuzzy ? '1' : '0' });
+    if (force) params.set('refresh', '1');
+    const result = await api('discover/search?' + params);
+    if (D.search !== search) return;
+    D.providers[index] = result.providers?.find(provider => provider.source === source)
+      || { source, name: sourceLabel[source], state: 'ok', count: result.items.length };
+    search.pages.set(source, result.items);
+    for (const alias of result.aliases || []) search.aliases.add(alias);
+    search.truncated ||= result.truncated;
+  } catch (error) {
+    if (D.search !== search) return;
+    D.providers[index] = { source, name: sourceLabel[source], state: 'error', message: error.message, count: 0 };
+  }
+  const results = mergeDiscoveryPages([...search.pages.values()]);
+  D.items = results.slice(0, 240);
+  D.loaded = true;
+  text('discovery-aliases', search.aliases.size ? '同时搜索了 ' + [...search.aliases].join('、') : '');
+  renderProviders();
+  renderDiscover();
+  if (!D.providers.some(provider => provider.state === 'pending')) {
+    if (!search.warned && (search.truncated || results.length > 240)) {
+      search.warned = true;
+      toast('结果较多，目前显示近期 240 份去重资源，可缩小范围。');
+    }
+    void refreshDiscoveryTasks(true);
+    if (search.query) void lookupDiscoverySubtitles(D.renderedGroups.slice(0, D.shown).flat()
+      .filter(item => !item.languages.length && !item.subtitleDetails));
+  }
+}
+
 async function searchDiscover(force = false) {
   if (D.busy) return;
   if (!D.sources.size) throw new Error('请至少选择一个资源来源。');
+  const search = {
+    query: $('discovery-query').value.trim(), fuzzy: $('discovery-fuzzy').checked,
+    sources: [...D.sources], pages: new Map(), aliases: new Set(), truncated: false, warned: false,
+  };
+  D.search = search;
   D.busy = true;
-  let lookup = false;
   D.shown = 24;
+  D.items = [];
+  D.providers = search.sources.map(source => ({ source, name: sourceLabel[source], state: 'pending' }));
   $('discovery-submit').disabled = true;
   $('discovery-submit').innerHTML = icon('refresh') + '正在搜索…';
   text('discovery-aliases', '');
+  renderProviders();
   renderDiscover();
   try {
-    const query = new URLSearchParams({
-      q: $('discovery-query').value.trim(),
-      sources: [...D.sources].join(','),
-      fuzzy: $('discovery-fuzzy').checked ? '1' : '0',
-    });
-    if (force) query.set('refresh', '1');
-    const result = await api('discover/search?' + query);
-    D.items = result.items;
-    lookup = !!result.query;
-    D.providers = result.providers;
-    D.loaded = true;
-    void refreshDiscoveryTasks(true);
-    if (result.aliases?.length) text('discovery-aliases', '同时搜索了 ' + result.aliases.join('、'));
-    renderProviders();
-    if (result.truncated) toast('结果较多，目前显示近期 240 份去重资源，可用更准确的词缩小范围。');
+    await Promise.all(search.sources.map(source => readDiscoveryProvider(search, source, force)));
   } finally {
     D.busy = false;
     $('discovery-submit').disabled = false;
     $('discovery-submit').innerHTML = icon('search') + '搜索资源';
     renderDiscover();
-    if (lookup) void lookupDiscoverySubtitles(D.renderedGroups.slice(0,D.shown).flat().filter(item => !item.languages.length));
   }
 }
+
+$('discovery-providers').addEventListener('click', guarded(async event => {
+  const source = event.target.closest('[data-retry-source]')?.dataset.retrySource;
+  if (source && D.search?.sources.includes(source) &&
+      D.providers.find(provider => provider.source === source)?.state === 'error')
+    await readDiscoveryProvider(D.search, source, true);
+}));
 function needsDiscoverySubtitleCheck(item) {
   return S.status?.config.filters.languages.includes('CHS') && !item.languages.includes('CHS');
 }
@@ -252,7 +357,7 @@ function setSelectedVariant(id) {
   refreshSelectedSubtitleMetadata();
   $('discovery-source-links').innerHTML = item.links.map(link =>
     '<a href="' + escape(link.url) + '" target="_blank" rel="noopener noreferrer">'
-    + escape(sourceLabel[link.source] || '来源') + ' 发布页 ↗</a>').join('');
+    + escape(sourceLabel[link.source] || '来源') + (link.source === 'seadex' ? ' 推荐索引 ↗</a>' : ' 发布页 ↗</a>')).join('');
   updateDiscoverAddButton();
   if (!D.pathEdited && !D.suppressPath) void updateDiscoveryPath();
 }
@@ -261,14 +366,42 @@ function selectedDiscoveryBatch() {
   return D.variants.filter(item => discoveryBatch.selected.has(item.resultId));
 }
 
+function discoveryEpisodeGroups(items) {
+  const groups = new Map();
+  for (const item of items) {
+    if (!Number.isInteger(item.episode)) continue;
+    if (!groups.has(item.episode)) groups.set(item.episode, []);
+    groups.get(item.episode).push(item);
+  }
+  return groups;
+}
+
+function showDiscoveryEpisodePreview(selected) {
+  const groups = discoveryEpisodeGroups(selected);
+  const available = discoveryEpisodeGroups(D.variants.filter(canSelectBatchItem));
+  const missing = [...available.keys()].filter(n => !groups.has(n)).sort((a, b) => a - b);
+  const repeated = [...groups].filter(([, items]) => items.length > 1).sort(([a], [b]) => a - b);
+  const unknown = selected.length - [...groups.values()].reduce((sum, rows) => sum + rows.length, 0);
+  const preview = [
+    groups.size ? '已选第 ' + [...groups.keys()].sort((a,b) => a-b).join('、') + ' 集' : '',
+    repeated.length ? repeated.map(([n, items]) => '第 ' + n + ' 集选了 ' + items.length + ' 个版本').join('，') : '',
+    missing.length ? '有可选资源但未勾选：第 ' + missing.join('、') + ' 集' : '',
+    unknown ? unknown + ' 项为合集或集数未明确' : '',
+  ];
+  text('discovery-batch-episodes', selected.length ? preview.filter(Boolean).join(' · ') : '');
+  $('discovery-batch-preferred').classList.toggle('hidden', !repeated.length);
+  $('discovery-batch-preferred').disabled = D.adding;
+}
+
 function updateDiscoverAddButton() {
   const item = D.selected;
   if (!item) return;
   const adding = D.adding || D.pathLoading || !!D.pathError;
   $('discovery-batch-mode').disabled = D.adding;
   const batch = discoveryBatch.active ? selectedDiscoveryBatch() : [];
+  const added = isDiscoveredPresent(item) && !D.progressTarget;
   const subtitleNeeded = (discoveryBatch.active ? batch : [item]).some(needsDiscoverySubtitleCheck);
-  $('discovery-subtitle-check').classList.toggle('hidden', !subtitleNeeded);
+  $('discovery-subtitle-check').classList.toggle('hidden', !subtitleNeeded || (!discoveryBatch.active && (added || discoveryFiles.manage)));
   text('discovery-subtitle-check-label', discoveryBatch.active
     ? '所选资源中有未明确标注简中的条目，我已核对字幕需求。'
     : '发布信息未明确标注简中，我已核对其字幕需求。');
@@ -279,14 +412,20 @@ function updateDiscoverAddButton() {
     button.innerHTML = icon('download') + (D.adding ? '正在批量提交…' : '下载选中 ' + batch.length + ' 项');
     text('discovery-batch-status', discoveryBatch.status
       || '已选 ' + batch.length + ' 项，可跨发布组勾选。最多 ' + discoveryBatchLimit + ' 项。');
+    showDiscoveryEpisodePreview(batch);
     return;
   }
-  const added = isDiscoveredPresent(item) && !D.progressTarget;
-  button.disabled = adding || added || !item.downloadable || discoveryFiles.loading
+  if (added || discoveryFiles.manage) {
+    button.disabled = D.adding || discoveryFiles.loading || (discoveryFiles.preview && discoveryFiles.manage && !discoveryFiles.selected.size);
+    button.innerHTML = icon('download') + (discoveryFiles.manage && discoveryFiles.preview
+      ? '提交补选' : '管理已选文件');
+    return;
+  }
+  button.disabled = adding || !item.downloadable || discoveryFiles.loading
     || !discoveryFiles.preview || !discoveryFiles.selected.size
     || (D.progressTarget && !$('discovery-progress-ack').checked) || subtitleBlocked;
-  button.innerHTML = icon(added ? 'check' : 'download') + (D.adding ? '正在添加…'
-    : added ? '已在下载列表' : !discoveryFiles.preview ? '先读取文件清单' : '下载选中文件');
+  button.innerHTML = icon('download') + (D.adding ? '正在添加…'
+    : !discoveryFiles.preview ? '先读取文件清单' : '下载选中文件');
 }
 
 function openDiscoverDetail(index) {
@@ -358,6 +497,32 @@ async function refreshAfterDiscoveryAdd() {
 async function addDiscovered() {
   if ($('discovery-add').disabled) return;
   if (discoveryBatch.active) return addDiscoveryBatch();
+  if (discoveryFiles.manage || (isDiscoveredPresent(D.selected) && !D.progressTarget)) {
+    if (!discoveryFiles.manage || !discoveryFiles.preview) {
+      await loadDiscoveryFiles(true);
+      $('discovery-files-title').scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    const payload = {
+      resultId: D.selected.resultId, version: discoveryFiles.preview.version,
+      indices: [...discoveryFiles.selected],
+    };
+    D.adding = true;
+    updateDiscoverAddButton();
+    $('discovery-add-error').classList.add('hidden');
+    try {
+      const result = await api('discover/selection/apply', payload);
+      toast('已补选 ' + result.added + ' 个文件。' + (result.stopped ? '可在 qB 手动开始。' : ''));
+    } catch (error) {
+      showDiscoveryError(error);
+      return;
+    } finally {
+      D.adding = false;
+      updateDiscoverAddButton();
+    }
+    await loadDiscoveryFiles(true);
+    return;
+  }
   const selected = D.selected;
   const fileSelection = { previewId: discoveryFiles.preview.previewId, indices: [...discoveryFiles.selected] };
   const options = {
@@ -496,6 +661,7 @@ function renderVersionGroups() {
           + (checked ? ' checked' : '') + (batch && (!canSelectBatchItem(item) || D.adding) ? ' disabled' : '')
           + '><span><strong>' + escape(item.title) + '</strong><small>' + escape(item.resolution || '画质未标注')
           + ' · ' + escape(item.sizeText || '体积未提供') + ' · ' + escape(releaseLanguage(item))
+          + (discoveryAudioText(item) ? ' · ' + escape(discoveryAudioText(item)) : '')
           + '</small>' + (outcome ? '<small class="discovery-batch-outcome">' + escape(outcome) + '</small>' : '')
           + '</span></label>';
       }).join('') + '</section>').join('');
@@ -557,6 +723,25 @@ $('discovery-batch-all').addEventListener('click', () => {
 });
 $('discovery-batch-none').addEventListener('click', () => {
   discoveryBatch.selected.clear();
+  discoveryBatch.status = '';
+  $('discovery-acknowledge').checked = false;
+  renderVersionGroups();
+});
+$('discovery-batch-preferred').addEventListener('click', () => {
+  const chosenGroup = $('discovery-version-group').value;
+  const priorities = (S.status?.config.filters.priorityGroups || []).map(norm);
+  const rank = item => {
+    if (chosenGroup && discoveryGroupName(item) === chosenGroup) return -1;
+    const index = priorities.indexOf(norm(item.groupName || ''));
+    return index < 0 ? priorities.length : index;
+  };
+  const resolution = item => item.resolution === '4k' ? 2160 : parseInt(item.resolution, 10) || 0;
+  for (const versions of discoveryEpisodeGroups(selectedDiscoveryBatch()).values()) {
+    versions.sort((a, b) => rank(a) - rank(b)
+      || Number(b.languages.includes('CHS')) - Number(a.languages.includes('CHS'))
+      || resolution(b) - resolution(a) || (b.seeders ?? -1) - (a.seeders ?? -1));
+    for (const item of versions.slice(1)) discoveryBatch.selected.delete(item.resultId);
+  }
   discoveryBatch.status = '';
   $('discovery-acknowledge').checked = false;
   renderVersionGroups();

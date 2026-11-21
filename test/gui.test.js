@@ -20,6 +20,95 @@ async function fixture(t,deps={},options={}) {
   return{dir,c,configFile,base,request};
 }
 
+test('existing collection selection adds only newly requested files and rejects stale priority changes', async t => {
+  const files = [
+    {index:1,name:'Demo - 01.mkv',size:100,priority:6,progress:1},
+    {index:2,name:'Demo - 02.mkv',size:200,priority:0,progress:0.2},
+    {index:3,name:'Demo - 03.mkv',size:300,priority:0,progress:0},
+  ];
+  let changes = 0;
+  const qb = {
+    login: async () => {}, logout: async () => {},
+    list: async () => [{hash:item.infoHash,state:'stoppedDL'}],
+    async request(route, body) {
+      if (route === 'torrents/files') return new Response(JSON.stringify(files));
+      assert.equal(route,'torrents/filePrio');
+      assert.equal(body.get('id'),'2');
+      assert.equal(body.get('hash'),item.infoHash);
+      changes++;
+      files[1].priority = Number(body.get('priority'));
+    },
+  };
+  const f = await fixture(t,{manualQb:qb,discovery:{peek:()=>item}});
+  const p = (await f.request('discover/selection',{resultId:'fixture'})).data;
+  assert.equal(p.stopped,true);
+  assert.equal(p.files[1].progress,0.2);
+  assert.equal((await f.request('discover/selection/apply',{resultId:'fixture',version:p.version,indices:[1]})).status,400);
+  assert.equal((await f.request('discover/selection/apply',{resultId:'fixture',version:p.version,indices:[2]})).data.added,1);
+  assert.deepEqual(files.map(file=>file.priority),[6,1,0]);
+  assert.equal((await f.request('discover/selection/apply',{resultId:'fixture',version:p.version,indices:[3]})).status,409);
+  assert.equal(changes,1);
+});
+
+test('mark only preserves downloader tasks and separates unwatched gaps from a real collection inventory', async t => {
+  const items = [1,2,3].map(n => ({...item,id:'release'+n,episode:String(n),title:'测试番 - 0'+n}));
+  const f = await fixture(t,{fetchFeed:async()=>items,episodeQb:{
+    login:async()=>{ throw Error('mark only must not connect to download client'); },
+  },qb:{login:async()=>{throw Error('qB offline');},logout:async()=>{}}});
+  const key = 'bgm:123';
+  await f.request('progress',{key,title:'测试番',watched:1,startEpisode:1,archived:false});
+  assert.equal((await f.request('progress/watched/mark',{key,episode:2})).status,200);
+  let row = (await f.request('progress')).data.shows[0];
+  assert.deepEqual(row.missing.map(entry=>entry.number),[3]);
+  assert.deepEqual(row.episodes.map(entry=>entry.watched),[true,true,false]);
+  const directory = path.join(f.dir,'collection');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory,'测试番 - 03.mkv'),'video');
+  const audit = await f.request('progress/collection',{key,directory});
+  assert.deepEqual(audit.data.missing,[1,2]);
+  assert.equal((await f.request('progress/watched/mark',{key})).status,200);
+  row = (await f.request('progress')).data.shows[0];
+  assert.equal(row.fullyWatched,true);
+  assert.equal(row.showDeletion,undefined);
+  assert.ok(fs.existsSync(path.join(directory,'测试番 - 03.mkv')));
+});
+
+test('local playback resumes the saved position, offers the next complete video after EOF and requires an existing file', async t => {
+  const hashes = ['b'.repeat(40),'c'.repeat(40)];
+  const starts = [];
+  let dir;
+  const filenames = ['Demo - 06.mkv','Demo - 07.mkv'];
+  const qb = {
+    login:async()=>{}, logout:async()=>{},
+    list:async()=>hashes.map(hash=>({hash,save_path:dir})),
+    request:async (route, unused, query) => {
+      assert.equal(route,'torrents/files');
+      const index = hashes.indexOf(new URLSearchParams(query).get('hash'));
+      return new Response(JSON.stringify([{index:0,name:filenames[index],size:3,progress:1,priority:1}]));
+    },
+  };
+  const f = await fixture(t,{playbackQb:qb,launchPlayback:async(file,sample,position)=>starts.push({file,sample,position})});
+  dir=f.dir;
+  const state = emptyState();
+  for (const [i,hash] of hashes.entries()) {
+    fs.writeFileSync(path.join(dir,filenames[i]),'abc');
+    state.done['episode'+i]={...item,episode:String(6+i),hash,status:'added',at:new Date().toISOString()};
+  }
+  atomicWrite(statePath(f.c,f.configFile),state);
+  assert.equal((await f.request('playback/start',{key:'bgm:123',episode:6})).status,200);
+  fs.writeFileSync(starts[0].sample,JSON.stringify({position:763,finished:false}));
+  assert.equal((await f.request('playback')).data.last.position,763);
+  assert.equal((await f.request('playback/start',{action:'resume'})).status,200);
+  assert.equal(starts[1].position,763);
+  fs.writeFileSync(starts[1].sample,JSON.stringify({position:1220,finished:true}));
+  assert.equal((await f.request('playback')).data.last.nextEpisode,7);
+  fs.unlinkSync(path.join(dir,filenames[1]));
+  assert.equal((await f.request('playback/start',{action:'next'})).status,400);
+  fs.writeFileSync(path.join(dir,filenames[1]),'abc');
+  assert.equal((await f.request('playback/start',{action:'next'})).status,200);
+  assert.equal(starts[2].file,path.join(dir,filenames[1]));
+});
+
 test('overview detail pagination matches the automatic counter beyond recent history and does not change records',async t=>{
   const f=await fixture(t,{executeScript:async()=>{throw new Error('read must not start a process');},qb:{login:async()=>{throw new Error('read must not open qB');}}}),state=emptyState();
   for(let n=0;n<85;n++)state.done['added-'+n]={status:'added',title:'累计任务 '+String(n).padStart(2,'0'),at:'2026-11-04T00:00:00Z',savePath:'D:/Anime/测试番'};

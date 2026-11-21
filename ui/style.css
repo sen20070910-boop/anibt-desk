@@ -236,6 +236,24 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 
 .progress-show-info{display:flex;align-items:center;gap:16px;min-width:0}
 .progress-show-info h3{overflow-wrap:anywhere}
+.continued-playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px 20px;
+}
+.continued-playback h2 { font-size: 15px; margin: 0; }
+.continued-playback p { margin: 5px 0 0; overflow-wrap: anywhere; }
+#collection-check-result { overflow-wrap: anywhere; }
+#episode-action-dialog .dialog-footer { flex-wrap: wrap; }
+#discovery-batch-episodes { overflow-wrap: anywhere; margin-bottom: 6px; }
+.discovery-dialog.is-managing:not(.is-batch) > .field:has(#discovery-save-path),
+.discovery-dialog.is-managing:not(.is-batch) > .inline-check:has(#discovery-paused, #discovery-allow-alternate) {
+  display: none;
+}
 .progress-direct-actions {
   display: flex;
   align-items: center;

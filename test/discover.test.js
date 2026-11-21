@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { normalizeHash,magnetHash,torrentInfoHash } from '../src/torrent.js';
 import { sourceUrl,validateProxy } from '../src/source-network.js';
-import { inferRelease,parseNyaa,parseDmhy,parseVcbProjects,mergeReleases,createDiscovery } from '../src/discover.js';
+import { inferRelease,parseNyaa,parseDmhy,parseVcbProjects,mergeReleases,createDiscovery,parseAcgRip,parseMoe,parseNekoBt,parseSeaDex } from '../src/discover.js';
 
 const encode=v=>Buffer.isBuffer(v)?Buffer.concat([Buffer.from(v.length+':'),v]):typeof v==='string'?encode(Buffer.from(v)):typeof v==='number'?Buffer.from('i'+v+'e'):Buffer.concat([Buffer.from('d'),...Object.keys(v).sort().flatMap(k=>[encode(k),encode(v[k])]),Buffer.from('e')]);
 const info={name:'local-test.txt',length:1,'piece length':16384,pieces:createHash('sha1').update('x').digest(),private:1};
@@ -18,6 +18,83 @@ test('torrent hash uses exact encoded info and rejects broken or duplicate dicti
 test('external fetch URL validation permits only supported hosts and proxy syntax',()=>{assert.equal(sourceUrl('http://share.dmhy.org/topics/view/1.html'),'https://share.dmhy.org/topics/view/1.html');for(const url of ['http://127.0.0.1/a','https://nyaa.si@evil.test/a','file:///c:/a','https://nyaa.si:8443/a'])assert.throws(()=>sourceUrl(url));assert.equal(validateProxy('http://127.0.0.1:7890'),'http://127.0.0.1:7890');assert.throws(()=>validateProxy('http://user:secret@127.0.0.1:7890'));});
 test('Nyaa RSS and DMHY search parse hash, subtitle, size, seeders and source links',()=>{const n=parseNyaa(rss)[0],d=parseDmhy(dmhy)[0];assert.equal(n.infoHash,d.infoHash);assert.deepEqual(n.languages,['CHS','CHT']);assert.equal(n.sizeBytes,1024**3);assert.equal(d.sizeBytes,1e9);assert.equal(n.seeders,8);assert.equal(d.seeders,3);assert.equal(d.pageUrl,'https://www.dmhy.org/topics/view/1_demo.html');assert.equal(n.workTitle,'测试作品');assert.throws(()=>parseNyaa('<html>login</html>'));assert.throws(()=>parseDmhy('<html>login</html>'));});
 test('subtitle inference does not claim simplified Chinese for unknown VCB subtitles',()=>{assert.deepEqual(inferRelease('[VCB-Studio] Demo 1080p HEVC').languages,[]);assert.deepEqual(inferRelease('[ANi] Demo [CHT]').languages,['CHT']);assert.ok(inferRelease('[Test] Demo [CHS]').languages.includes('CHS'));});
+
+test('ACG.RIP uses its own public torrent and checks unknown hashes when resolving and reopening', async () => {
+  const feed = '<rss xmlns:torrent="urn:test"><channel>'
+    + '<item><title>测试作品 [简中]</title><link>https://acg.rip/t/123</link><torrent:contentLength>1234</torrent:contentLength></item>'
+    + '<item><title>无效发布</title><link>https://invalid.example/t/123</link></item></channel></rss>';
+  assert.equal(parseAcgRip(feed).length, 1);
+  assert.equal(parseAcgRip(feed)[0].sizeBytes, 1234);
+  const network = {
+    cacheKey: () => 'test',
+    async read(address, options) {
+      if (options?.binary) {
+        assert.equal(address, 'https://acg.rip/t/123.torrent');
+        return { bytes: torrent };
+      }
+      assert.equal(new URL(address).searchParams.get('term'), '测试作品');
+      return { text: feed };
+    },
+  };
+  const discovery = createDiscovery(() => ({}), { network });
+  const { items: [result] } = await discovery.search({ sources: ['acg'], query: '测试作品', fuzzy: false });
+  assert.equal(result.infoHash, '');
+  assert.equal(result.downloadable, true);
+  assert.equal((await discovery.resolve(result.resultId)).infoHash, hash);
+  const restored = discovery.reopen({ hash, title: result.title, sourceLinks: result.links });
+  assert.deepEqual(restored.sources, ['acg']);
+  assert.equal((await discovery.resolve(restored.resultId)).infoHash, hash);
+});
+
+test('nekoBT keeps audio separate from subtitles and groups episodes by season', () => {
+  const item = {
+    id: '127125', title: '[group] Demo S02E04 1080p', infohash: hash, batch: false,
+    audio_lang: 'ja,zh-hans', sub_lang: 'zh-hant,ru', fsub_lang: 'en',
+    private_magnet: 'magnet:?xt=urn:btih:' + hash + '&secret=never-read',
+  };
+  const [row] = parseNekoBt(JSON.stringify({ error: false, data: { results: [item, { ...item, hidden: true }] } }));
+  assert.equal(row.workTitle, 'Demo S02');
+  assert.equal(row.episode, '04');
+  assert.deepEqual(row.languages, ['CHT', 'RU', 'EN']);
+  assert.deepEqual(row.audioLanguages, ['JA', 'CHS']);
+  assert.equal(row.torrentUrl, 'https://nekobt.to/api/v1/torrents/127125/download?public=true');
+  assert.ok(!row.magnet.includes('never-read'));
+});
+
+test('SeaDex uses matched AniList IDs and merges supported public recommendations by hash', async () => {
+  const publicRow = { infoHash: hash, url: 'https://nyaa.si/view/1', isBest: true, releaseGroup: 'Group' };
+  const entries = { items: [{ alID: 275, expand: { trs: [
+    publicRow, { ...publicRow, infoHash: '<redacted>' },
+    { ...publicRow, url: 'https://evil.example/view/1' },
+  ] } }] };
+  assert.equal(parseSeaDex(JSON.stringify(entries), new Map([[275, 'Demo']])).length, 1);
+  const moe = { _id: 'd'.repeat(24), category_tag_id: '549ef207fe682f7549f1ea90', title, infoHash: hash, seeders: 5 };
+  assert.equal(parseMoe(JSON.stringify({ torrents: [moe, { ...moe, category_tag_id: 'music' }] })).length, 1);
+  const network = {
+    cacheKey: () => 'test',
+    async read(address, options) {
+      const url = new URL(address);
+      if (options?.binary) return { bytes: torrent };
+      if (url.hostname === 'graphql.anilist.co') {
+        assert.deepEqual(options.jsonBody.variables, { q0: 'Demo' });
+        return { text: JSON.stringify({data:{q0:{media:[{id:275,title:{romaji:'Demo'}}]}}}) };
+      }
+      if (url.hostname === 'seadex.moe') {
+        assert.equal(url.searchParams.get('filter'), 'alID=275');
+        return { text: JSON.stringify(entries) };
+      }
+      assert.equal(url.hostname, 'bangumi.moe');
+      return { text: JSON.stringify({ torrents: [moe] }) };
+    },
+  };
+  const discovery = createDiscovery(() => ({}), { network });
+  const result = await discovery.search({ sources: ['moe','seadex'], query: 'Demo', fuzzy: false });
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].seadexRating, 'best');
+  assert.deepEqual(result.items[0].sources, ['moe','seadex']);
+  assert.ok(result.items[0].links.some(link => link.source === 'nyaa'));
+  assert.equal((await discovery.resolve(result.items[0].resultId)).infoHash, hash);
+});
 test('VCB project parser reads title, project URL and magnet without executing page content',()=>{const projects=parseVcbProjects(`<article><h2 class="entry-title"><a href="/archives/12">测试作品 HEVC BDRip [Fin]</a></h2><div class="entry-content"><script>ignored()</script><a href="magnet:?xt=urn:btih:${hash}">下载</a></div></article>`);assert.equal(projects.length,1);assert.equal(projects[0].pageUrl,'https://vcb-s.com/archives/12');assert.equal(projects[0].infoHash,hash);});
 test('cross-source merge combines origins while keeping only one torrent and highest seed count',()=>{const merged=mergeReleases([...parseDmhy(dmhy),...parseNyaa(rss)]);assert.equal(merged.length,1);assert.deepEqual(merged[0].sources,['dmhy','nyaa']);assert.equal(merged[0].links.length,2);assert.equal(merged[0].seeders,8);});
 test('unified search tolerates VCB browser validation and clearly labels associated releases',async()=>{const network=mockNetwork();const service=createDiscovery(()=>({}),{network});const search={query:'VCB-Studio',sources:['anibt','dmhy','nyaa','vcb'],fuzzy:false};const result=await service.search(search);assert.equal(result.items.length,1);assert.deepEqual(new Set(result.items[0].sources),new Set(['anibt','dmhy','nyaa','vcb']));assert.equal(result.providers.find(p=>p.source==='vcb').state,'fallback');assert.ok(result.providers.find(p=>p.source==='vcb').message.includes('浏览器验证'));assert.equal(result.items[0].links.length,3);const calls=network.calls.length;await service.search(search);assert.equal(network.calls.length,calls);const resolved=await service.resolve(result.items[0].resultId);assert.equal(resolved.infoHash,hash);assert.equal(torrentInfoHash(resolved.torrentData),hash);});

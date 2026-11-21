@@ -71,8 +71,10 @@ export function buildProgress({items=[],state,manual={},completed={},torrents=[]
   }
   return [...shows.values()].map(show=>{
     const start=show.startEpisode||1,end=Math.min(show.latest,start+499),missing=[];
-    for(let n=start;n<=end;n++){const e=show.episodes.get(n);if(!e||e.status==='已发布')missing.push({number:n,candidateIds:e?.candidateIds||[]});}
-    const episodes=[...show.episodes.values()].sort((a,b)=>a.number-b.number).map(e=>({...e,watched:Object.hasOwn(show.episodeStates||{},String(e.number))?show.episodeStates[e.number]:e.number<=(show.watched||0),deleted:!!show.deletedEpisodes?.[e.number],deletionWarning:!!(show.deletedEpisodes?.[e.number]?.filesRemaining||show.deletedEpisodes?.[e.number]?.unknownFiles||show.deletedEpisodes?.[e.number]?.folderErrors)}));
+    const watched = n => Object.hasOwn(show.episodeStates || {}, String(n))
+      ? show.episodeStates[n] === true : n <= (show.watched || 0);
+    for(let n=start;n<=end;n++){const e=show.episodes.get(n);if(!watched(n)&&(!e||e.status==='已发布'))missing.push({number:n,candidateIds:e?.candidateIds||[]});}
+    const episodes=[...show.episodes.values()].sort((a,b)=>a.number-b.number).map(e=>({...e,watched:watched(e.number),deleted:!!show.deletedEpisodes?.[e.number],deletionWarning:!!(show.deletedEpisodes?.[e.number]?.filesRemaining||show.deletedEpisodes?.[e.number]?.unknownFiles||show.deletedEpisodes?.[e.number]?.folderErrors)}));
     const fullyWatched=!!show.completedAt&&episodes.every(e=>e.watched);
     const resources = directResources.get(show.key) || [];
     const direct = resources.length > 0 && !subscribed.has(show.key);

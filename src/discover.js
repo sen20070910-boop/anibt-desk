@@ -5,9 +5,10 @@ import { Converter } from 'opencc-js/t2cn';
 import { parseFeed } from './feed.js';
 import { normalizeHash, magnetHash, torrentInfoHash } from './torrent.js';
 import { createSourceNetwork, sourceUrl } from './source-network.js';
-import { hasMultipleSubtitles, titleSubtitleCodes } from './subtitle-language.js';
+import { hasMultipleSubtitles, hasVideoExtension, subtitleLanguageCode, titleSubtitleCodes } from './subtitle-language.js';
 import { nyaaSubtitlePage, readNyaaSubtitleDetails } from './nyaa-subtitles.js';
 import { sourceLinks as historyLinks } from './history-actions.js';
+import { singleEpisode, episodeInReleaseTitle } from './episodes.js';
 
 export const sourceNames = {
   anibt: 'AniBT',
@@ -16,6 +17,10 @@ export const sourceNames = {
   dmhy: '动漫花园',
   nyaa: 'Nyaa',
   vcb: 'VCB-S 作品',
+  acg: 'ACG.RIP',
+  nekobt: 'nekoBT',
+  moe: '萌番组',
+  seadex: 'SeaDex',
 };
 const mikanBase = 'https://mikanime.tv/';
 const gardenBase = 'https://animes.garden/';
@@ -34,6 +39,96 @@ export function inferRelease(title,description='') {
 }
 function validPage(url,base){if(typeof url!=='string'||!url.trim())return '';try{return sourceUrl(url,base);}catch{return '';}}
 function sizeBytes(text){const m=String(text).match(/([\d.]+)\s*([KMGT]?i?B)/i);if(!m)return 0;const power={B:0,K:1,M:2,G:3,T:4}[m[2][0].toUpperCase()]||0;return Number(m[1])*(/i/i.test(m[2])?1024:1000)**power;}
+function byteLabel(bytes) {
+  return bytes >= 1024 ** 3 ? (bytes / 1024 ** 3).toFixed(2) + ' GiB'
+    : bytes > 0 ? (bytes / 1024 ** 2).toFixed(1) + ' MiB' : '';
+}
+function count(value) {
+  const n = Number(value);
+  return value !== '' && value != null && Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+const nyaaTracker = 'https://nyaa.tracker.wf/announce';
+const nekoTracker = 'https://tracker.nekobt.to/api/tracker/public/announce';
+const magnetFor = (hash, tracker) => 'magnet:?xt=urn:btih:' + hash + (tracker ? '&tr=' + encodeURIComponent(tracker) : '');
+const publicNekoTorrent = id => 'https://nekobt.to/api/v1/torrents/' + id + '/download?public=true';
+const moeTorrent = id => 'https://bangumi.moe/download/torrent/' + id + '/anibt.torrent';
+
+export function parseAcgRip(text) {
+  if (/<!DOCTYPE|<!ENTITY/i.test(text) || XMLValidator.validate(text) !== true)
+    throw new Error('ACG.RIP 返回了无法识别的 RSS。');
+  const channel = xml.parse(text)?.rss?.channel;
+  if (!channel) throw new Error('ACG.RIP 没有返回资源列表。');
+  return array(channel.item).slice(0, 100).flatMap(raw => {
+    const title = str(raw.title);
+    const pageUrl = validPage(str(raw.link), 'https://acg.rip/');
+    const id = pageUrl && /^https:\/\/acg\.rip\/t\/(\d+)$/.exec(pageUrl)?.[1];
+    if (!title || !id) return [];
+    const bytes = count(raw['torrent:contentLength'] ?? raw['media:content']?.['@_fileSize']) || 0;
+    const infoHash = normalizeHash(str(raw['torrent:infoHash']));
+    return [{
+      ...inferRelease(title), title, pageUrl, infoHash, magnet: '',
+      torrentUrl: pageUrl + '.torrent', sizeBytes: bytes, sizeText: byteLabel(bytes),
+      seeders: null, publishedAt: str(raw.pubDate), source: 'acg', kind: 'release',
+    }];
+  });
+}
+
+export function parseMoe(text) {
+  const data = JSON.parse(text);
+  if (!Array.isArray(data?.torrents) || data.success === false)
+    throw new Error('萌番组没有返回可识别的资源列表。');
+  return data.torrents.slice(0, 100).flatMap(raw => {
+    if (raw?.category_tag_id !== '549ef207fe682f7549f1ea90' ||
+        !/^[a-f0-9]{24}$/i.test(raw._id ?? '') || typeof raw.title !== 'string' || !raw.title.trim()) return [];
+    const title = raw.title.trim();
+    const release = inferRelease(title);
+    const infoHash = normalizeHash(raw.infoHash);
+    const sizeText = typeof raw.size === 'string' ? raw.size : '';
+    return [{
+      ...release, title, groupName: typeof raw.team?.name === 'string' ? raw.team.name : release.groupName,
+      infoHash, magnet: infoHash && magnetHash(raw.magnet) === infoHash ? raw.magnet : '',
+      torrentUrl: moeTorrent(raw._id), pageUrl: 'https://bangumi.moe/torrent/' + raw._id,
+      sizeText, sizeBytes: sizeBytes(sizeText), seeders: count(raw.seeders),
+      publishedAt: raw.publish_time, source: 'moe', kind: 'release',
+    }];
+  });
+}
+
+function languageCodes(tags) {
+  return typeof tags === 'string' ? tags.split(',').map(value => {
+    const tag = value.trim();
+    return subtitleLanguageCode(tag) || (/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(tag) ? tag.split('-')[0].toUpperCase() : '');
+  }).filter(Boolean) : [];
+}
+export function parseNekoBt(text) {
+  const data = JSON.parse(text);
+  if (data?.error !== false || !Array.isArray(data.data?.results))
+    throw new Error('nekoBT 没有返回可识别的资源列表。');
+  return data.data.results.slice(0, 100).flatMap(raw => {
+    const infoHash = normalizeHash(raw?.infohash);
+    const title = typeof raw?.title === 'string' ? raw.title.trim() : '';
+    if (!title || !infoHash || !/^\d{1,20}$/.test(raw.id ?? '') || raw.hidden || raw.deleted) return [];
+    const release = inferRelease(title);
+    const numbered = release.workTitle.match(/\b(S\d{1,2})E(\d{1,4})(?:v(\d+))?([-~]E?\d{1,4})?\b/i);
+    const groups = Array.isArray(raw.groups) ? raw.groups : [];
+    const group = groups.find(group => group?.uploading_group) || groups[0];
+    const bytes = count(raw.filesize) || 0;
+    const date = new Date(Number(raw.uploaded_at));
+    return [{
+      ...release, title, groupName: typeof group?.display_name === 'string' ? group.display_name : release.groupName,
+      workTitle: numbered ? release.workTitle.replace(numbered[0], numbered[1].toUpperCase()) : release.workTitle,
+      episode: numbered && !numbered[4] && raw.batch === false ? numbered[2] : '',
+      version: numbered?.[3] ? 'v' + numbered[3] : 'v1',
+      languages: [...new Set([...release.languages, ...languageCodes(raw.sub_lang), ...languageCodes(raw.fsub_lang)])],
+      audioLanguages: [...new Set(languageCodes(raw.audio_lang))],
+      infoHash, magnet: magnetHash(raw.magnet) === infoHash ? raw.magnet : magnetFor(infoHash, nekoTracker),
+      torrentUrl: publicNekoTorrent(raw.id), pageUrl: 'https://nekobt.to/torrents/' + raw.id,
+      sizeText: byteLabel(bytes), sizeBytes: bytes, seeders: count(raw.seeders),
+      publishedAt: Number.isFinite(+date) && +date > 0 ? date.toISOString() : '',
+      source: 'nekobt', kind: 'release',
+    }];
+  });
+}
 export function parseNyaa(text) {
   if(/<!DOCTYPE|<!ENTITY/i.test(text)||XMLValidator.validate(text)!==true)throw new Error('Nyaa 返回了无法识别的内容。');
   const channel=xml.parse(text)?.rss?.channel;if(!channel)throw new Error('Nyaa 没有返回资源列表。');
@@ -125,13 +220,79 @@ export function parseVcbProjects(text,base='https://vcb-s.com/') {
 }
 export function mergeReleases(items) {
   const map=new Map();
-  for(const item of items){const key=item.infoHash?'hash:'+item.infoHash:'page:'+item.pageUrl;if(!map.has(key))map.set(key,{...item,sources:[],links:[]});const entry=map.get(key);if(!entry.sources.includes(item.source))entry.sources.push(item.source);for(const link of item.links?.length?item.links:[{source:item.source,url:item.pageUrl}])if(link.url&&!entry.links.some(l=>l.url===link.url))entry.links.push(link);if(item.torrentUrl&&!entry.torrentUrl)entry.torrentUrl=item.torrentUrl;if(item.magnet&&!entry.magnet)entry.magnet=item.magnet;if(item.seeders!=null)entry.seeders=Math.max(entry.seeders||0,item.seeders);entry.languages=[...new Set([...entry.languages,...item.languages])];if(!entry.sizeText&&item.sizeText){entry.sizeText=item.sizeText;entry.sizeBytes=item.sizeBytes;}if(item.kind==='project')entry.kind='project';}
+  for (const item of items) {
+    const key = item.infoHash ? 'hash:' + item.infoHash : 'page:' + item.pageUrl;
+    if (!map.has(key)) map.set(key, { ...item, sources: [], links: [] });
+    const entry = map.get(key);
+    if (!entry.sources.includes(item.source)) entry.sources.push(item.source);
+    for (const link of item.links?.length ? item.links : [{ source: item.source, url: item.pageUrl }]) {
+      if (link.url && !entry.links.some(existing => existing.url === link.url)) entry.links.push(link);
+    }
+    if (item.torrentUrl && !entry.torrentUrl) entry.torrentUrl = item.torrentUrl;
+    if (item.magnet && !entry.magnet) entry.magnet = item.magnet;
+    if (item.seeders != null) entry.seeders = Math.max(entry.seeders || 0, item.seeders);
+    entry.languages = [...new Set([...entry.languages, ...item.languages])];
+    if (item.audioLanguages?.length)
+      entry.audioLanguages = [...new Set([...(entry.audioLanguages || []), ...item.audioLanguages])];
+    if (item.seadexRating && entry.seadexRating !== 'best') entry.seadexRating = item.seadexRating;
+    if (!entry.sizeText && item.sizeText) {
+      entry.sizeText = item.sizeText;
+      entry.sizeBytes = item.sizeBytes;
+    }
+    if (item.kind === 'project') entry.kind = 'project';
+  }
   return[...map.values()].sort((a,b)=>(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0));
 }
 const titleKey = title => title.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, '');
 let simplify;
 const simplifiedTitle = title => (simplify ??= Converter({ from: 't', to: 'cn' }))(title);
 const catalogKey = title => titleKey(simplifiedTitle(title));
+function publicTorrent(page) {
+  const url = new URL(page);
+  const id = url.pathname.split('/').at(-1);
+  if (url.hostname === 'nyaa.si' && /^\/view\/\d+$/.test(url.pathname))
+    return { torrentUrl: 'https://nyaa.si/download/' + id + '.torrent', tracker: nyaaTracker, source: 'nyaa' };
+  if (url.hostname === 'nekobt.to' && /^\/torrents\/\d+$/.test(url.pathname))
+    return { torrentUrl: publicNekoTorrent(id), tracker: nekoTracker, source: 'nekobt' };
+  if (url.hostname === 'acg.rip' && /^\/t\/\d+$/.test(url.pathname))
+    return { torrentUrl: url.origin + url.pathname + '.torrent', source: 'acg' };
+  if (url.hostname === 'bangumi.moe' && /^\/torrent\/[a-f0-9]{24}$/i.test(url.pathname))
+    return { torrentUrl: moeTorrent(id), source: 'moe' };
+  return null;
+}
+export function parseSeaDex(text, titles = new Map()) {
+  const data = JSON.parse(text);
+  if (!Array.isArray(data?.items)) throw new Error('SeaDex 没有返回可识别的推荐列表。');
+  return data.items.slice(0, 12).flatMap(entry => {
+    const versions = entry?.expand?.trs;
+    if (!Array.isArray(versions)) return [];
+    return versions.slice(0, 40).flatMap(raw => {
+      const infoHash = normalizeHash(raw?.infoHash);
+      const pageUrl = validPage(raw?.url);
+      const download = pageUrl && publicTorrent(pageUrl);
+      if (!infoHash || !download) return [];
+      const files = Array.isArray(raw.files) ? raw.files : [];
+      const video = files.filter(file => typeof file?.name === 'string' && hasVideoExtension(file.name));
+      const filename = video[0]?.name.split(/[\\/]/).at(-1) || '';
+      const groupName = typeof raw.releaseGroup === 'string' ? raw.releaseGroup : '';
+      const inferred = inferRelease(filename.replace(/\.[^.]+$/, '').replaceAll('.', ' ')).workTitle
+        .replace(/\bS(\d{1,2})E\d+\b.*$/i, (_, season) => Number(season) === 1 ? '' : 'Season ' + Number(season)).trim();
+      const workTitle = titles.get(entry.alID) || inferred;
+      if (!workTitle) return [];
+      const resolution = filename.match(/(?:2160|1080|720|480)p/i)?.[0]?.toLowerCase()
+        || (/[x×]1080\b/i.test(filename) ? '1080p' : '');
+      const bytes = files.reduce((sum, file) => sum + (count(file?.length) || 0), 0);
+      return [{
+        title: (groupName ? '[' + groupName + '] ' : '') + workTitle + (video.length > 1 ? ' · ' + video.length + ' 个视频' : ''),
+        workTitle, groupName, languages: titleSubtitleCodes(filename), subtitles: [], resolution,
+        infoHash, magnet: magnetFor(infoHash, download.tracker), torrentUrl: download.torrentUrl, pageUrl,
+        sizeBytes: bytes, sizeText: byteLabel(bytes), seeders: null, publishedAt: entry.updated,
+        source: 'seadex', kind: 'release', seadexRating: raw.isBest === true ? 'best' : 'alt',
+        links: [{ source: download.source, url: pageUrl }, { source: 'seadex', url: 'https://seadex.moe/' }],
+      }];
+    });
+  });
+}
 function seasonSuffix(title) {
   const normalized = title.normalize('NFKC');
   const match = normalized.match(/(?:\s*第\s*([一二三四五六七八九十两兩\d]{1,3})\s*[季期]|\s+(?:s(\d{1,2})|season\s+(\d{1,2})|(\d{1,2})(?:st|nd|rd|th)\s+season))$/i);
@@ -178,9 +339,9 @@ function canBeFirstSeason(item) {
 // AniBT supplies the first and second names. Keep the common simplified
 // spelling of the Taiwanese title usable even when the catalog is offline.
 const knownTitleGroups = [
-  ['药屋少女的呢喃', '藥師少女的獨語', '药师少女的独语', '薬屋のひとりごと', 'Kusuriya no Hitorigoto', 'The Apothecary Diaries'],
+  ['药屋少女的呢喃', '藥師少女的獨語', '药师少女的独语', '薬屋のひとりごと', 'The Apothecary Diaries', 'Kusuriya no Hitorigoto'],
 ];
-function distinctAliases(query, names) {
+function distinctAliases(query, names, limit = 3) {
   const seen = new Set([titleKey(query)]);
   const result = [];
   for (const name of names) {
@@ -190,13 +351,13 @@ function distinctAliases(query, names) {
     if (!key || seen.has(key) || Buffer.byteLength(title) > 150) continue;
     seen.add(key);
     result.push(title);
-    if (result.length === 3) break;
+    if (result.length === limit) break;
   }
   return result;
 }
 export function createDiscovery(getPreferences,{network=createSourceNetwork(getPreferences),now=()=>Date.now()}={}) {
   const cache=new Map(),results=new Map();
-  const remember=item=>{const id=randomBytes(16).toString('hex');results.set(id,{item,at:now()});return{resultId:id,title:item.title,workTitle:item.workTitle,groupName:item.groupName,languages:item.languages,resolution:item.resolution,subtitles:item.subtitles,sizeText:item.sizeText,sizeBytes:item.sizeBytes,seeders:item.seeders,publishedAt:item.publishedAt,sources:item.sources,links:item.links,kind:item.kind,downloadable:!!(item.infoHash||item.torrentUrl||item.kind==='project'),description:item.description||'',infoHash:item.infoHash,multipleSubtitles:hasMultipleSubtitles(item.title),subtitleLookup:!!nyaaSubtitlePage(item)};};
+  const remember=item=>{const id=randomBytes(16).toString('hex');results.set(id,{item,at:now()});return{resultId:id,title:item.title,workTitle:item.workTitle,groupName:item.groupName,episode:singleEpisode(item.episode)||(!item.episode&&item.kind!=='project'?episodeInReleaseTitle(item.title):null),languages:item.languages,audioLanguages:item.audioLanguages,seadexRating:item.seadexRating,resolution:item.resolution,subtitles:item.subtitles,sizeText:item.sizeText,sizeBytes:item.sizeBytes,seeders:item.seeders,publishedAt:item.publishedAt,sources:item.sources,links:item.links,kind:item.kind,downloadable:!!(item.infoHash||item.torrentUrl||item.kind==='project'),description:item.description||'',infoHash:item.infoHash,multipleSubtitles:hasMultipleSubtitles(item.title),subtitleLookup:!!nyaaSubtitlePage(item)};};
   const memo=(key,run,force)=>{key=network.cacheKey()+'|'+key;const old=cache.get(key);if(old&&(old.pending||!force&&now()-old.at<120000))return old.promise;const promise=run();const entry={at:now(),promise,pending:true};cache.set(key,entry);promise.then(()=>entry.pending=false,()=>{if(cache.get(key)?.promise===promise)cache.delete(key);});return promise;};
   async function provider(source,query,force=false) {
     return memo(source+'|'+query,async()=>{
@@ -214,6 +375,26 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       }
       if(source==='dmhy'){url=new URL('https://www.dmhy.org/topics/list');if(query)url.searchParams.set('keyword',query);parser=parseDmhy;}
       if(source==='nyaa'){url=new URL('https://nyaa.si/');url.searchParams.set('page','rss');url.searchParams.set('c','1_0');url.searchParams.set('f','0');if(query)url.searchParams.set('q',query);parser=parseNyaa;}
+      if (source === 'acg') {
+        url = new URL('https://acg.rip/.xml');
+        if (query) url.searchParams.set('term', query);
+        parser = parseAcgRip;
+      }
+      if (source === 'moe') {
+        url = new URL('https://bangumi.moe/api/v2/torrent/' + (query ? 'search' : 'page/1'));
+        url.searchParams.set('limit', '50');
+        if (query) {
+          url.searchParams.set('p', '1');
+          url.searchParams.set('query', query);
+        }
+        parser = parseMoe;
+      }
+      if (source === 'nekobt') {
+        url = new URL('https://nekobt.to/api/v1/torrents/search');
+        url.searchParams.set('limit', '50');
+        if (query) url.searchParams.set('query', query);
+        parser = parseNekoBt;
+      }
       if(!url)throw new Error('不支持的来源。');const r=await network.read(url.href);return{items:parser(r.text),via:r.via,state:'ok'};
     },force);
   }
@@ -223,7 +404,7 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     if (key.length < 2) return [];
     const known = !season || season.number === 1
       ? knownTitleGroups.find(group => group.some(name => catalogKey(name) === key)) : null;
-    if (known) return distinctAliases(season?.number === 1 ? title : query, known);
+    if (known) return distinctAliases(season?.number === 1 ? title : query, known, 4);
     for (const term of new Set([title, simplifiedTitle(title)])) {
       try {
         const page = await memo('title-alias-catalog|' + term, async () => {
@@ -241,6 +422,7 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
   }
   async function searchProvider(source, query, aliases, force) {
     if (source === 'vcb') return vcb(query, force, await aliases);
+    if (source === 'seadex') return seaDex(query, await aliases, force);
     const original = Promise.allSettled([provider(source, query, force)]);
     const terms = await aliases;
     const variants = Promise.allSettled(terms.map(term => provider(source, term, force)));
@@ -253,6 +435,46 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       state: 'ok',
       message: available.length < terms.length + 1 ? '部分关键词查询未完成，已显示成功返回的结果。' : '',
     };
+  }
+  async function seaDex(query, aliases, force) {
+    const terms = [...new Set([query, ...aliases].filter(Boolean))].slice(0, 5);
+    return memo('seadex|' + JSON.stringify(terms), async () => {
+      const titles = new Map();
+      const paths = [];
+      if (terms.length) {
+        const variables = Object.fromEntries(terms.map((term, i) => ['q' + i, term]));
+        const declaration = Object.keys(variables).map(key => '$' + key + ':String!').join(',');
+        const fields = Object.keys(variables).map(key =>
+          key + ':Page(perPage:5){media(type:ANIME,search:$' + key + '){id title{romaji english native} synonyms}}').join(' ');
+        const response = await network.read('https://graphql.anilist.co/', {
+          jsonBody: { query: 'query(' + declaration + '){' + fields + '}', variables },
+          maxBytes: 400_000, timeoutMs: 5500,
+        });
+        paths.push(response.via);
+        const { data } = JSON.parse(response.text);
+        if (!data) throw new Error('AniList 没有返回可识别的作品列表。');
+        const keys = terms.map(catalogKey);
+        for (const { media } of Object.values(data).filter(page => Array.isArray(page?.media))) {
+          for (const row of media) {
+            if (!Number.isSafeInteger(row?.id) || row.id <= 0) continue;
+            const names = [row.title?.english, row.title?.romaji, row.title?.native,
+              ...(Array.isArray(row.synonyms) ? row.synonyms : [])].filter(name => typeof name === 'string' && name.trim());
+            if (names.length && names.some(name => keys.includes(catalogKey(name)))) titles.set(row.id, names[0]);
+          }
+        }
+        if (!titles.size) return { items: [], via: response.via, state: 'ok', message: '未匹配到可核对的 AniList 作品名称。' };
+      }
+      const url = new URL('https://seadex.moe/api/collections/entries/records');
+      url.search = new URLSearchParams({ expand: 'trs', sort: '-updated', perPage: '8', skipTotal: 'true' });
+      if (titles.size) url.searchParams.set('filter', [...titles.keys()].slice(0, 8).map(id => 'alID=' + id).join(' || '));
+      const response = await network.read(url.href, { maxBytes: 4_000_000, timeoutMs: 7000 });
+      paths.push(response.via);
+      const items = parseSeaDex(response.text, titles);
+      return {
+        items, state: 'ok', via: [...new Set(paths.filter(Boolean))].join(' / '),
+        message: query && !items.length ? '匹配作品暂无可用的公开推荐版本。' : '',
+      };
+    }, force);
   }
   async function vcb(query, force, aliases) {
     const terms = [...new Set([query, ...aliases])];
@@ -327,20 +549,21 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     if (!/^[a-f0-9]{40}$/.test(infoHash)) throw new Error('原记录缺少有效的种子标识。');
     const links = historyLinks(row).flatMap(link => {
       const host = new URL(link.url).hostname;
-      const source = host === 'nyaa.si' ? 'nyaa' : host.endsWith('dmhy.org') ? 'dmhy'
+      const source = publicTorrent(link.url)?.source || (host === 'seadex.moe' ? 'seadex'
+        : host === 'nyaa.si' ? 'nyaa' : host.endsWith('dmhy.org') ? 'dmhy'
         : host.endsWith('animes.garden') ? 'garden' : host.endsWith('vcb-s.com') ? 'vcb'
-        : host.startsWith('mikan') ? 'mikan' : 'anibt';
+        : host.startsWith('mikan') ? 'mikan' : 'anibt');
       return [{ source, url: link.url }];
     });
-    const pageUrl = nyaaSubtitlePage({ links });
+    const pageUrl = links.find(link => publicTorrent(link.url))?.url || '';
+    const download = pageUrl && publicTorrent(pageUrl);
     const title = row.title || row.animeTitle;
     const metadata = inferRelease(title);
-    const tracker = pageUrl ? '&tr=https%3A%2F%2Fnyaa.tracker.wf%2Fannounce' : '';
     return remember({
       ...metadata, title, workTitle: row.animeTitle || metadata.workTitle, kind: 'release', infoHash,
       animeTitle: row.animeTitle, bgmId: row.bgmId, episode: row.episode, version: row.version,
-      pageUrl, torrentUrl: pageUrl ? pageUrl.replace('/view/','/download/') + '.torrent' : '',
-      magnet: 'magnet:?xt=urn:btih:' + infoHash + tracker,
+      pageUrl, torrentUrl: download?.torrentUrl || '',
+      magnet: magnetFor(infoHash, download?.tracker),
       sources: [...new Set(links.map(link => link.source))], links,
     });
   }

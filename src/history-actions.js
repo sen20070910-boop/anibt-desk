@@ -24,6 +24,10 @@ const releasePageHosts = new Set([
   "www.animes.garden",
   "mikanime.tv",
   "mikanani.me",
+  "acg.rip",
+  "bangumi.moe",
+  "nekobt.to",
+  "seadex.moe",
 ]);
 export function sourceLinks(row) {
   const result = [];
@@ -39,7 +43,7 @@ export function sourceLinks(row) {
         !u.username &&
         !u.password &&
         !u.port &&
-        !/[?&](key|token)=/i.test(u.search)
+        ![...u.searchParams.keys()].some(key => /^(?:api[-_]?key|pass[-_]?key|key|token|auth)$/i.test(key))
       )
         result.push({ name: u.hostname, url: u.href });
     } catch {}

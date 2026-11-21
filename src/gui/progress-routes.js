@@ -23,6 +23,8 @@ import {
 import { localDownloader } from "../history-actions.js";
 import { QbClient } from "../qb.js";
 import { submitAgain, resetCompletion } from "../reprocessing.js";
+import { collectionInventory } from "../local-video.js";
+import { animeDownloadPath } from "../download-path.js";
 import path from "node:path";
 // Route boundary extracted without changing business decisions.
 export function createProgressRoutes(ctx) {
@@ -273,6 +275,59 @@ export function createProgressRoutes(ctx) {
         throw new Error("这部番不在我看过的列表中。");
       delete tracking[entryKey].completedAt;
       tracking[entryKey].archived = false;
+      ctx.atomicWrite(ctx.trackingFile, tracking);
+      ctx.json(res, 200, { ok: true });
+      return;
+    }
+    if (route === "POST /api/progress/collection") {
+      if (typeof body.key !== "string" || body.key.length > 500 ||
+          !/^(bgm:\d{1,8}|title:.+)$/.test(body.key) ||
+          (body.directory !== undefined && typeof body.directory !== "string"))
+        throw new Error("番剧或目录无效。");
+      const config = ctx.getConfig();
+      const manual = ctx.readManual();
+      const state = loadState(statePath(config, ctx.configFile), config, Object.values(manual));
+      const items = await ctx.readFeed(false).catch(() => []);
+      const show = buildProgress({ items, state, manual, config, tracking: ctx.readTracking() })
+        .find(row => row.key === body.key);
+      if (!show?.latest) throw new Error("这部作品暂时没有可核对的集数范围。");
+      let directory = body.directory?.trim();
+      if (!directory) {
+        if (!localDownloader(config)) throw new Error("请输入本机收藏目录。");
+        const qb = await ctx.qbInfo(false);
+        directory = animeDownloadPath({ animeTitle: show.title, bgmId: show.bgmId }, config, qb.savePath);
+      }
+      const end = Math.min(show.latest, 500);
+      const result = await collectionInventory(directory, end);
+      ctx.json(res, 200, { ...result, directory, end, latest: show.latest });
+      return;
+    }
+    if (route === "POST /api/progress/watched/mark") {
+      const { key, episode } = body;
+      if (typeof key !== "string" || key.length > 500 ||
+          !/^(bgm:\d{1,8}|title:.+)$/.test(key) ||
+          (episode !== undefined && (!Number.isInteger(episode) || episode < 1 || episode > 9999)))
+        throw new Error("番剧或集数无效。");
+      const items = await ctx.readFeed(false).catch(() => []);
+      ctx.requireIdle();
+      ctx.requireRecovered();
+      const config = ctx.getConfig();
+      const tracking = ctx.readTracking();
+      const manual = ctx.readManual();
+      const state = loadState(statePath(config, ctx.configFile), config, Object.values(manual));
+      const show = buildProgress({ items, state, manual, config, tracking }).find(row => row.key === key);
+      if (!show || (episode !== undefined && !show.episodes.some(row => row.number === episode)))
+        throw new Error("找不到这部作品或这一集，请刷新进度。");
+      const priorKey = ctx.trackedKey(tracking, key, config);
+      const entry = { ...tracking[priorKey], title: show.title, bgmId: show.bgmId, episodeStates: { ...show.episodeStates } };
+      if (episode === undefined) {
+        entry.watched = Math.max(show.watched, show.latest);
+        for (let n = 1; n <= show.latest; n++) entry.episodeStates[n] = true;
+        entry.completedAt = show.fullyWatched ? show.completedAt : new Date().toISOString();
+        entry.archived = false;
+      } else entry.episodeStates[episode] = true;
+      tracking[key] = entry;
+      if (priorKey !== key) delete tracking[priorKey];
       ctx.atomicWrite(ctx.trackingFile, tracking);
       ctx.json(res, 200, { ok: true });
       return;

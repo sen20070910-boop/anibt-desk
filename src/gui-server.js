@@ -5,6 +5,7 @@ import {
   guardPortableUpdate,
 } from "./portable-updater.js";
 import { closeMpvForTargets } from "./mpv-close.js";
+import { createPlaybackRoutes } from "./gui/playback-routes.js";
 import { createSubscriptionRoutes } from "./gui/subscription-routes.js";
 import { createSettingsRoutes } from "./gui/settings-routes.js";
 import { createDownloadRoutes } from "./gui/download-routes.js";
@@ -1261,6 +1262,7 @@ export function makeApplication({
     createDownloadRoutes(serviceContext),
     createBackupRoutes(serviceContext),
     createProgressRoutes(serviceContext),
+    createPlaybackRoutes(serviceContext),
   ];
 
   const handler = async (req, res) => {

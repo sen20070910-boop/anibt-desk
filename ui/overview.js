@@ -1,4 +1,37 @@
 'use strict';
+(() => {
+  let mode = '', busy = false;
+  const button = $('continued-playback-button');
+  const status = $('continued-playback-status');
+  function playbackTime(position) {
+    const seconds = Math.max(0, Math.floor(position));
+    const parts = [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60];
+    return (parts[0] ? parts : parts.slice(1)).map((part, i) => i ? String(part).padStart(2, '0') : part).join(':');
+  }
+  async function updatePlayback() {
+    if (busy || S.page !== 'overview') return;
+    const { last } = await api('playback');
+    if (busy || S.page !== 'overview') return;
+    const title = last ? last.title + (last.episode ? ' · 第 ' + last.episode + ' 集' : '') : '';
+    mode = last?.nextEpisode ? 'next' : last?.local && !last.finished ? 'resume' : '';
+    if (!last) status.textContent = '在追番进度里用 mpv 播放后，播放位置会显示在这里。';
+    else if (last.finished) status.textContent = title + ' · 已播完';
+    else status.textContent = title + ' · 上次看到 ' + playbackTime(last.position) + (last.local ? '' : ' · 文件已移除');
+    button.textContent = mode === 'next' ? '播放下一集' : mode === 'resume' ? '继续播放' : '打开追番进度';
+  }
+  button.addEventListener('click', guarded(async () => {
+    if (!mode) return changePage('progress');
+    if (busy) return;
+    busy = true;
+    button.disabled = true;
+    try { await api('playback/start', { action: mode }); }
+    finally { busy = false; button.disabled = false; await updatePlayback().catch(() => {}); }
+  }));
+  window.addEventListener('anibt-page-change', () => void updatePlayback().catch(() => {}));
+  window.AniBTRuntime.register('continued-playback', updatePlayback, {
+    intervalMs: 10000, enabled: () => S.page === 'overview',
+  });
+})();
 (()=>{
   const D={kind:'animes',page:1,rows:[],request:0,total:0,pages:1};
   const specs={animes:{title:'正在订阅',hint:'按当前 RSS 中的番名统计。尚无发布的已订阅番剧可在「网站已订阅」查看。',empty:'当前 RSS 还没有番剧资源'},matched:{title:'符合偏好的资源',hint:'当前 RSS 中符合已保存偏好的发布；包括已处理、基线和等待补位的资源，不代表都会再次下载。',empty:'当前没有符合偏好的资源'},added:{title:'已自动添加的任务',hint:'从最近一次清理起累计自动添加，与首页计数一致；含仅手动清空显示的历史，不含手动添加或 qB 原有任务，也不代表当前下载进度。',empty:'还没有自动添加的任务'},pending:{title:'等待重试',hint:'持久队列中尚未提交成功的资源，包含等待优先组的条目。后台检查时会重新核对来源、网站退订与当前偏好。',empty:'当前没有等待重试的任务'}};
