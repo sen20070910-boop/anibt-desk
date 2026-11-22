@@ -23,6 +23,8 @@
   };
   const search = { request: 0, input: null, items: [] };
   const dialog = $("ratings-dialog");
+  const pageTrigger = $("rankings-page");
+  const pageOptions = $("rankings-page-options");
   const ready = new Map();
   const formatter = new Intl.NumberFormat("zh-CN");
   let activeWork,
@@ -35,6 +37,29 @@
   }
   function votes(row) {
     return row.votes ? formatter.format(row.votes) + " 人评分" : "";
+  }
+  function togglePageOptions(visible) {
+    pageOptions.classList.toggle("hidden", !visible);
+    pageTrigger.setAttribute("aria-expanded", String(visible));
+    if (visible)
+      pageOptions
+        .querySelector('[aria-current="page"]')
+        ?.focus({ preventScroll: true });
+  }
+  function renderPageOptions(page, totalPages) {
+    pageTrigger.textContent = "第 " + page + " 页";
+    pageOptions.replaceChildren(
+      ...Array.from({ length: totalPages }, (_, index) => {
+        const number = index + 1;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.rankingPage = number;
+        button.textContent = number;
+        button.setAttribute("aria-label", "第 " + number + " 页");
+        if (number === page) button.setAttribute("aria-current", "page");
+        return button;
+      }),
+    );
   }
   function renderRankingRow(row, index) {
     const combined = Array.isArray(row.results);
@@ -114,6 +139,7 @@
       : "正在读取 " + labels[source] + " 榜单…";
     status.className = "notice";
     if (!refresh) $("rankings-results").replaceChildren();
+    togglePageOptions(false);
     $("rankings-pager").classList.add("hidden");
     $("rankings-refresh").disabled = true;
     ranking.loaded = true;
@@ -142,14 +168,7 @@
       $("rankings-prev").disabled = page <= 1;
       $("rankings-next").disabled = !result.hasNext;
       const totalPages = result.totalPages || (result.hasNext ? 20 : page);
-      const pageSelect = $("rankings-page");
-      pageSelect.replaceChildren(
-        ...Array.from(
-          { length: totalPages },
-          (_, index) => new Option("第 " + (index + 1) + " 页", index + 1),
-        ),
-      );
-      pageSelect.value = String(page);
+      renderPageOptions(page, totalPages);
       $("rankings-pager").classList.toggle(
         "hidden",
         page === 1 && !result.hasNext,
@@ -418,6 +437,7 @@
   }
 
   function showSearchView(visible) {
+    if (visible) togglePageOptions(false);
     $("ratings-search-view").classList.toggle("hidden", !visible);
     $("rankings-view").classList.toggle("hidden", visible);
     $("rankings-refresh").classList.toggle("hidden", visible);
@@ -527,9 +547,36 @@
       goToRankingPage(ranking.page + delta),
     );
   }
-  $("rankings-page").addEventListener("change", (event) =>
-    goToRankingPage(Number(event.target.value)),
+  const pageJump = $("rankings-page-jump");
+  pageTrigger.addEventListener("click", () =>
+    togglePageOptions(pageOptions.classList.contains("hidden")),
   );
+  pageOptions.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-ranking-page]");
+    if (!button) return;
+    pageTrigger.focus({ preventScroll: true });
+    togglePageOptions(false);
+    goToRankingPage(Number(button.dataset.rankingPage));
+  });
+  pageJump.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || pageOptions.classList.contains("hidden"))
+      return;
+    event.preventDefault();
+    pageTrigger.focus({ preventScroll: true });
+    togglePageOptions(false);
+  });
+  pageJump.addEventListener("focusout", (event) => {
+    if (event.relatedTarget && !pageJump.contains(event.relatedTarget))
+      togglePageOptions(false);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (
+      !pageOptions.classList.contains("hidden") &&
+      !pageJump.contains(event.target)
+    )
+      togglePageOptions(false);
+  });
+  window.addEventListener("anibt-page-change", () => togglePageOptions(false));
   $("rankings-refresh").addEventListener("click", () => void loadRanking(true));
   for (const id of ["rankings-category", "rankings-limited"]) {
     $(id).addEventListener("change", () => {

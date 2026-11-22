@@ -114,7 +114,10 @@
         <div id="rankings-results" class="rankings-grid"></div>
         <div class="rankings-pager hidden" id="rankings-pager">
           <button class="button secondary" id="rankings-prev">上一页</button>
-          <select id="rankings-page" aria-label="跳转榜单页码" title="选择页码"></select>
+          <div class="rankings-page-jump" id="rankings-page-jump">
+            <button type="button" id="rankings-page" class="muted" aria-expanded="false" aria-controls="rankings-page-options" title="跳转页码"></button>
+            <div id="rankings-page-options" class="rankings-page-options hidden" role="group" aria-label="选择页码"></div>
+          </div>
           <button class="button secondary" id="rankings-next">下一页</button>
         </div>
         </div>
