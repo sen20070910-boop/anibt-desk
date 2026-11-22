@@ -1392,6 +1392,7 @@ export function makeApplication({
           Number(u.searchParams.get("page") ?? "1"),
           u.searchParams.get("refresh") === "1",
           u.searchParams.get("category") ?? "tv",
+          u.searchParams.get("view") === "limited",
         );
         json(res, 200, {
           ...result,

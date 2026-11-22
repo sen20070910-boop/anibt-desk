@@ -70,22 +70,30 @@
       </section>
       <section id="page-rankings" class="page hidden" aria-label="动漫排行">
         <div class="page-intro">
-          <div><h2>动漫排行</h2><p>按评分站浏览榜单，选中作品后直接查找发行资源。</p></div>
+          <div><h2>动画口碑榜</h2><p>查看综合或单站评分，找到喜欢的作品后直接搜索资源。</p></div>
           <button class="button secondary" id="rankings-refresh"><span data-icon="refresh"></span>刷新榜单</button>
         </div>
         <div class="panel rankings-toolbar">
           <div class="source-selector" role="group" aria-label="榜单来源">
-            <button class="source-chip selected" data-rating-source="bangumi" aria-pressed="true">Bangumi</button>
+            <button class="source-chip selected" data-rating-source="combined" aria-pressed="true">综合排行</button>
+            <button class="source-chip" data-rating-source="bangumi" aria-pressed="false">Bangumi</button>
             <button class="source-chip" data-rating-source="mal" aria-pressed="false">MyAnimeList</button>
             <button class="source-chip" data-rating-source="anilist" aria-pressed="false">AniList</button>
             <button class="source-chip" data-rating-source="douban" aria-pressed="false">豆瓣</button>
           </div>
           <small id="rankings-scope" class="muted"></small>
-          <select id="rankings-category" aria-label="豆瓣榜单分类" class="hidden">
-            <option value="tv">日本动画剧集</option>
+          <select id="rankings-category" aria-label="榜单分类" class="hidden">
+            <option value="tv">动画剧集</option>
             <option value="movie">动画电影</option>
           </select>
+          <label id="rankings-limited-control" class="inline-check hidden"><input type="checkbox" id="rankings-limited">查看数据较少的作品</label>
         </div>
+        <details id="rankings-method" class="panel rankings-method hidden">
+          <summary>计算方式与榜单覆盖</summary>
+          <p>各站前 100 部提供候选，再用多个榜单深度的同类作品校准百分位。各站等权，Bangumi 和 AniList 的小样本评分向本站样本均值校正。正式排名至少需要三站评分。</p>
+          <p id="rankings-coverage" class="muted"></p>
+          <p id="rankings-stability" class="muted"></p>
+        </details>
         <div id="rankings-status" role="status" aria-live="polite"></div>
         <div id="rankings-results" class="rankings-grid"></div>
         <div class="rankings-pager hidden" id="rankings-pager">
@@ -140,6 +148,7 @@
       <div><h2 id="ratings-dialog-heading">作品评分</h2><p class="muted" id="ratings-dialog-title"></p></div>
       <button class="icon-button close-dialog" aria-label="关闭"><span data-icon="close"></span></button>
     </div>
+    <p id="ratings-combined-summary" class="muted hidden"></p>
     <div id="ratings-dialog-results" aria-live="polite"></div>
     <div class="dialog-actions"><button class="button secondary" id="ratings-retry">刷新评分</button></div>
   </dialog>

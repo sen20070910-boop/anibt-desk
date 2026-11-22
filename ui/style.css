@@ -385,3 +385,18 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
   .ranking-card { grid-template-columns: 66px minmax(0, 1fr); padding: 12px; gap: 11px; }
   .rating-provider { gap: 7px; }
 }
+
+.rankings-method {
+  margin: 0 0 18px;
+  padding: 13px 17px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.rankings-method summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 600;
+}
+.rankings-method p { margin: 8px 0 2px; overflow-wrap: anywhere; }
+#rankings-limited-control { min-height: 32px; padding-inline: 4px; }
+#ratings-combined-summary { margin: 0 0 8px; line-height: 1.6; }

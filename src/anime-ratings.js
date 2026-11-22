@@ -2,6 +2,7 @@ import { load } from "cheerio/slim";
 import { Converter } from "opencc-js/t2cn";
 import { createSourceNetwork } from "./source-network.js";
 import { bangumiNames, findBangumi, readBangumi } from "./bangumi-catalog.js";
+import { createCombinedRankings } from "./combined-rankings.js";
 
 export const RATING_SOURCES = ["bangumi", "mal", "anilist", "douban"];
 const pageSize = 25;
@@ -150,7 +151,8 @@ export function parseMalRanking(html) {
         row
           .find(".information")
           .html()
-          ?.replace(/<br\s*\/?>/gi, " ") || "";
+          ?.replace(/<br\s*\/?>/gi, " ")
+          .trim() || "";
       return rating("mal", {
         id: malIdFrom(link.attr("href")),
         names: link.text(),
@@ -242,16 +244,113 @@ export function createAnimeRatings(preferences, options = {}) {
     return response.data;
   }
 
-  async function ranking(source, page = 1, refresh = false, category = "tv") {
+  async function doubanChart(category, offset, limit) {
+    const tag = category === "tv" ? "日本动画" : "动画";
+    const data = await json(
+      `${douban}/j/search_subjects?type=${category}&tag=${encodeURIComponent(tag)}&sort=rank&page_limit=${limit}&page_start=${offset}`,
+    );
+    return data.subjects.map((item) =>
+      rating("douban", {
+        id: item.id,
+        names: getNames(item.title, item.sub_title),
+        year: item.year || item.release_year,
+        score: item.rate,
+        cover: item.cover,
+        format: category,
+      }),
+    );
+  }
+
+  async function sampledPage(source, category, offset) {
+    const limit = 50;
+    if (source === "bangumi") {
+      const data = await json(
+        `${bangumi}/v0/subjects?type=2&cat=${category === "tv" ? 1 : 3}&sort=rank&limit=${limit}&offset=${offset}`,
+      );
+      return data.data.map(bangumiRow);
+    }
+    if (source === "anilist") {
+      const data = await ani(
+        `query ($page: Int, $format: MediaFormat) { Page(page: $page, perPage: ${limit}) {
+        media(type: ANIME, format: $format, sort: [SCORE_DESC], isAdult: false) { ${GQL_FIELDS} }
+      } }`,
+        {
+          page: offset / limit + 1,
+          format: category === "tv" ? "TV" : "MOVIE",
+        },
+      );
+      return data.Page.media.map(anilistRow);
+    }
+    if (source === "mal") {
+      return parseMalRanking(
+        await read(`${mal}/topanime.php?type=${category}&limit=${offset}`),
+      );
+    }
+    return doubanChart(category, offset, limit);
+  }
+
+  async function readSample(source, category) {
+    // The first two pages supply nominations. The other windows broaden
+    // each site's reference distribution without crawling the catalogue.
+    const offsets = {
+      bangumi: [0, 50, 150, 350, 650],
+      mal: [0, 50, 200, 450, 850],
+      anilist: [0, 50, 200, 400, 750],
+      douban: [0, 50, 150, 270, 420],
+    }[source];
+    const pages = [];
+    for (let index = 0; index < offsets.length; index += 2) {
+      const batch = await Promise.allSettled(
+        offsets
+          .slice(index, index + 2)
+          .map((offset) => sampledPage(source, category, offset)),
+      );
+      pages.push(
+        ...batch.map((result) =>
+          (result.value || []).filter(
+            (row) => row?.score != null && row.format === category,
+          ),
+        ),
+      );
+      if (index === 0 && !pages.some((rows) => rows.length)) return null;
+    }
+    const sample = pages.flat();
+    if (pages.filter((rows) => rows.length >= 10).length < 3) return null;
+    return {
+      rows: sample,
+      candidateIds: pages
+        .slice(0, 2)
+        .flat()
+        .map((row) => row.id),
+      complete: pages.every((rows) => rows.length >= 10),
+    };
+  }
+  const combined = createCombinedRankings(readSample, titleKey, {
+    now,
+    networkKey: network.cacheKey,
+  });
+
+  async function ranking(
+    source,
+    page = 1,
+    refresh = false,
+    category = "tv",
+    limited = false,
+  ) {
     if (
-      !RATING_SOURCES.includes(source) ||
+      (source !== "combined" && !RATING_SOURCES.includes(source)) ||
       !Number.isInteger(page) ||
       page < 1 ||
       page > 20
     )
       throw Error("排行榜来源或页码无效。");
-    if (source === "douban" && !["tv", "movie"].includes(category))
-      throw Error("豆瓣榜单分类无效。");
+    if (
+      ["douban", "combined"].includes(source) &&
+      !["tv", "movie"].includes(category)
+    )
+      throw Error("榜单分类无效。");
+    if (source === "combined")
+      return combined(category, page, refresh, limited);
     return cached(
       `rank:${source}:${page}:${category}`,
       30 * 60_000,
@@ -288,20 +387,8 @@ export function createAnimeRatings(preferences, options = {}) {
             top.length === malPageSize ||
             top.length > offset - start + pageSize;
         } else {
-          const tag = category === "tv" ? "日本动画" : "动画";
-          const data = await json(
-            `${douban}/j/search_subjects?type=${category}&tag=${encodeURIComponent(tag)}&sort=rank&page_limit=${pageSize}&page_start=${offset}`,
-          );
-          rows = data.subjects.map((item) =>
-            rating("douban", {
-              id: item.id,
-              names: item.title,
-              score: item.rate,
-              cover: item.cover,
-              format: category,
-            }),
-          );
-          hasNext = data.subjects.length === pageSize;
+          rows = await doubanChart(category, offset, pageSize);
+          hasNext = rows.length === pageSize;
         }
         return {
           source,
