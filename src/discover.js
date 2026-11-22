@@ -153,6 +153,30 @@ export function parseNyaa(text) {
   const channel=xml.parse(text)?.rss?.channel;if(!channel)throw new Error('Nyaa 没有返回资源列表。');
   return array(channel.item).map(raw=>{const title=str(raw.title),hash=normalizeHash(raw['nyaa:infoHash']),pageUrl=validPage(str(raw.guid)||str(raw.link),'https://nyaa.si/');return{title,...inferRelease(title),infoHash:hash,magnet:hash?'magnet:?xt=urn:btih:'+hash+'&tr=https%3A%2F%2Fnyaa.tracker.wf%2Fannounce':'',torrentUrl:validPage(str(raw.link),'https://nyaa.si/'),pageUrl,sizeText:str(raw['nyaa:size']),sizeBytes:sizeBytes(raw['nyaa:size']),seeders:raw['nyaa:seeders']!==undefined?Number(raw['nyaa:seeders']):null,publishedAt:str(raw.pubDate),source:'nyaa',kind:'release'};}).filter(i=>i.title&&(i.infoHash||i.torrentUrl));
 }
+function parseNyaaPage(text) {
+  const $ = load(text);
+  const table = $('table.torrent-list');
+  if (!table.length && !/no (?:results|torrents) found/i.test($('body').text()))
+    throw new Error('Nyaa 没有返回可识别的搜索页。');
+  const items = table.find('tbody tr').toArray().flatMap(element => {
+    const cells = $(element).children('td');
+    const link = cells.eq(1).find('a[href^="/view/"]').last();
+    const title = link.text().trim();
+    const magnet = cells.eq(2).find('a[href^="magnet:"]').attr('href') || '';
+    const torrentUrl = validPage(cells.eq(2).find('a[href^="/download/"]').attr('href'), 'https://nyaa.si/');
+    if (!title || (!magnetHash(magnet) && !torrentUrl)) return [];
+    const stamp = Number(cells.eq(4).attr('data-timestamp'));
+    const sizeText = cells.eq(3).text().trim();
+    return [{
+      title, ...inferRelease(title), infoHash: magnetHash(magnet), magnet, torrentUrl, sizeText,
+      pageUrl: validPage(link.attr('href'), 'https://nyaa.si/'), sizeBytes: sizeBytes(sizeText),
+      seeders: count(cells.eq(5).text().trim()),
+      publishedAt: stamp > 0 && stamp < 7258118400 ? new Date(stamp * 1000).toISOString() : '',
+      source: 'nyaa', kind: 'release',
+    }];
+  });
+  return {items, links: $('.pagination a[href]').toArray().map(element => $(element).attr('href'))};
+}
 export function parseDmhy(text) {
   const $=load(text);const rows=$('#topic_list tbody tr');if(!$('#topic_list').length)throw new Error('动漫花园没有返回可识别的资源列表。');
   return rows.map((_,row)=>{const r=$(row),cells=r.children('td');const anchor=r.find('td.title>a[href*="/topics/view/"]').first();const title=anchor.text().trim();const magnet=r.find('a[href^="magnet:"]').first().attr('href')||r.find('[data-magnet]').first().attr('data-magnet')||'';const published=cells.eq(0).text().match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}/)?.[0];const sizeText=cells.eq(4).text().trim();const seeds=cells.eq(5).text().trim();return{title,...inferRelease(title),groupName:r.find('td.title .tag').text().trim()||inferRelease(title).groupName,infoHash:magnetHash(magnet),magnet,torrentUrl:'',pageUrl:validPage(anchor.attr('href'),'https://www.dmhy.org/'),sizeText,sizeBytes:sizeBytes(sizeText),seeders:/^\d+$/.test(seeds)?Number(seeds):null,publishedAt:published?published.replaceAll('/','-').replace(' ','T')+':00+08:00':'',source:'dmhy',kind:'release'};}).get().filter(i=>i.title&&i.infoHash);
@@ -350,6 +374,39 @@ function matchingCatalogNames(page, query, season) {
   return matches.size === 1 ? matches.values().next().value : [];
 }
 
+function seriesTerms(page, query, aliases) {
+  const bases = [query, ...aliases];
+  const keys = new Set(bases.map(catalogKey));
+  const rootNames = page.filter(row => row && typeof row === 'object').map(catalogNames)
+    .filter(names => names.some(name => keys.has(catalogKey(name))) &&
+      !names.some(name => (seasonSuffix(name)?.number ?? 1) > 1));
+  if (rootNames.length === 1) {
+    for (const name of rootNames[0]) {
+      if (!keys.has(catalogKey(name))) bases.push(name);
+      keys.add(catalogKey(name));
+    }
+  }
+  const related = new Map();
+  for (const row of page) {
+    if (!row || typeof row !== 'object') continue;
+    const names = catalogNames(row);
+    const number = names.map(seasonSuffix).find(season => season && keys.has(catalogKey(season.title)))?.number;
+    if (number > 1) related.set(number, [...(related.get(number) || []), ...names.filter(name =>
+      seasonSuffix(name)?.number === number || (yearSuffix.test(name) && keys.has(catalogKey(name.replace(yearSuffix, '')))))]);
+  }
+  if (!related.size) return {names: [], numbered: []};
+  const latin = bases.find(name => /^[\x20-\x7e]+$/.test(name) && /[a-z]/i.test(name));
+  const chinese = bases.find(name => /[\p{Script=Han}]/u.test(name) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(name));
+  const numbers = [1, ...related.keys()];
+  const names = numbers.flatMap(number => {
+    const suffix = '第' + ('一二三四五六七八九十'[number - 1] || number) + '季';
+    return [...(chinese ? [chinese + suffix, chinese + ' ' + suffix] : []), ...(related.get(number) || [])];
+  });
+  const numbered = latin ? numbers.map(number => latin + ' S' + String(number).padStart(2, '0')) : [];
+  return {names: [...new Set([...bases.slice(aliases.length + 1), ...names])].filter(name => Buffer.byteLength(name) <= 150),
+    numbered: numbered.filter(name => Buffer.byteLength(name) <= 150)};
+}
+
 // AniBT supplies the first and second names. Keep the common simplified
 // spelling of the Taiwanese title usable even when the catalog is offline.
 const knownTitleGroups = [
@@ -370,11 +427,11 @@ function distinctAliases(query, names, limit = 3) {
   return result;
 }
 export function createDiscovery(getPreferences,{network=createSourceNetwork(getPreferences),now=()=>Date.now()}={}) {
-  const cache=new Map(),results=new Map();
+  const cache=new Map(),results=new Map(),continuations=new Map();
   const remember=item=>{const id=randomBytes(16).toString('hex');results.set(id,{item,at:now()});return{resultId:id,title:item.title,workTitle:item.workTitle,bgmId:item.bgmId,anilistId:item.anilistId,groupName:item.groupName,episode:singleEpisode(item.episode)||(!item.episode&&item.kind!=='project'?episodeInReleaseTitle(item.title):null),languages:item.languages,audioLanguages:item.audioLanguages,seadexRating:item.seadexRating,resolution:item.resolution,subtitles:item.subtitles,sizeText:item.sizeText,sizeBytes:item.sizeBytes,seeders:item.seeders,publishedAt:item.publishedAt,sources:item.sources,links:item.links,kind:item.kind,downloadable:!!(item.infoHash||item.torrentUrl||item.kind==='project'),description:item.description||'',infoHash:item.infoHash,multipleSubtitles:hasMultipleSubtitles(item.title),subtitleLookup:!!nyaaSubtitlePage(item)};};
   const memo=(key,run,force)=>{key=network.cacheKey()+'|'+key;const old=cache.get(key);if(old&&(old.pending||!force&&now()-old.at<120000))return old.promise;const promise=run();const entry={at:now(),promise,pending:true};cache.set(key,entry);promise.then(()=>entry.pending=false,()=>{if(cache.get(key)?.promise===promise)cache.delete(key);});return promise;};
-  async function provider(source,query,force=false) {
-    return memo(source+'|'+query,async()=>{
+  async function provider(source,query,force=false,page=1) {
+    return memo(source+'|'+page+'|'+query,async()=>{
       let url,parser;
       if(source==='anibt'){url=new URL('https://anibt.net/rss/magnets.xml');url.searchParams.set('limit','60');if(query)url.searchParams.set('q',query);parser=text=>parseFeed(text).map(i=>({...i,...inferRelease(i.title),languages:i.languages.length?i.languages:inferRelease(i.title).languages,groupName:i.groupName||inferRelease(i.title).groupName,resolution:i.resolution||inferRelease(i.title).resolution,workTitle:i.animeTitle||inferRelease(i.title).workTitle,pageUrl:'https://anibt.net/release/'+encodeURIComponent(i.id),sizeText:'',sizeBytes:0,seeders:null,source:'anibt',kind:'release'}));}
       if (source === 'garden') {
@@ -410,25 +467,37 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
         parser = parseNekoBt;
       }
       if (!url) throw new Error('不支持的来源。');
-      const first = await network.read(url.href);
-      const items = parser(first.text);
-      let via = first.via, message = '';
-      if (query && ((source === 'garden' && items.length >= 100) ||
-          (source === 'dmhy' && load(first.text)('a[href^="/topics/list/page/2?"]').length))) {
-        // The older search page is part of the same public query. Keep the
-        // first page if loading more fails.
-        if (source === 'garden') url.searchParams.set('page', '2');
-        else url.pathname = '/topics/list/page/2';
-        try {
-          const older = await network.read(url.href);
-          items.push(...parser(older.text));
-          via = [...new Set([via, older.via].filter(Boolean))].join(' / ');
-        } catch {
-          message = '后续搜索页暂时无法读取，已保留首批结果。';
+      if (page > 1) {
+        if (source === 'garden') url.searchParams.set('page', String(page));
+        if (source === 'dmhy') url.pathname = '/topics/list/page/' + page;
+        if (source === 'nyaa') {
+          url.searchParams.delete('page');
+          url.searchParams.set('p', String(page));
         }
       }
-      return {items, via, state: 'ok', message};
+      const response = await network.read(url.href);
+      const nyaaPage = source === 'nyaa' && page > 1 ? parseNyaaPage(response.text) : null;
+      const items = nyaaPage ? nyaaPage.items : parser(response.text);
+      let next = 0;
+      if (query && source === 'garden') {
+        const data = JSON.parse(response.text);
+        if (data.resources.length && (data.pagination?.complete === false ||
+            (data.pagination?.complete == null && data.resources.length >= 100))) next = page + 1;
+      }
+      if (query && source === 'dmhy' &&
+          load(response.text)(`a[href^="/topics/list/page/${page + 1}?"]`).length) next = page + 1;
+      if (query && source === 'nyaa' && (page === 1 ? items.length >= 75 :
+          nyaaPage.links.some(href => new URL(href, url).searchParams.get('p') === String(page + 1)))) next = page + 1;
+      return {items, via: response.via, next};
     },force);
+  }
+  async function catalogPage(term, force) {
+    return memo('title-alias-catalog|' + term, async () => {
+      const url = 'https://anibt.net/api/animes/search?' + new URLSearchParams({ q: term, limit: '16' });
+      const { text } = await network.read(url, { maxBytes: 1_000_000, timeoutMs: 3500 });
+      const { page } = JSON.parse(text);
+      return Array.isArray(page) ? page : [];
+    }, force);
   }
   async function titleAliases(query, force, season) {
     const title = season?.title || query;
@@ -439,12 +508,7 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     if (known) return distinctAliases(season?.number === 1 ? title : query, known, 4);
     for (const term of new Set([title, simplifiedTitle(title)])) {
       try {
-        const page = await memo('title-alias-catalog|' + term, async () => {
-          const url = 'https://anibt.net/api/animes/search?' + new URLSearchParams({ q: term, limit: '16' });
-          const { text } = await network.read(url, { maxBytes: 1_000_000, timeoutMs: 3500 });
-          const { page } = JSON.parse(text);
-          return Array.isArray(page) ? page : [];
-        }, force);
+        const page = await catalogPage(term, force);
         const names = matchingCatalogNames(page, query, season);
         if (names.length) return distinctAliases(season?.number === 1 ? title : query, names);
       } catch {}
@@ -460,11 +524,52 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     const original = season?.number === 1 ? title : query;
     return distinctAliases(original, [simplifiedTitle(original)]);
   }
-  async function searchProvider(source, query, aliases, force, firstSeason) {
-    if (source === 'vcb') return vcb(firstSeason || query, force, await aliases);
-    if (source === 'seadex') return seaDex(query, await aliases, force);
-    const original = Promise.allSettled([provider(source, query, force)]);
-    const terms = [...await aliases];
+  async function readSourceTerm(source, term, force, prefetch = false) {
+    const result = await provider(source, term.query, force, term.page);
+    if (!prefetch || result.next !== 2 || !['garden', 'dmhy'].includes(source)) return result;
+    try {
+      const next = await provider(source, term.query, force, result.next);
+      return {items: [...result.items, ...next.items], via: [...new Set([result.via, next.via].filter(Boolean))].join(' / '), next: next.next};
+    } catch {
+      return {...result, message: '后续搜索页暂时无法读取，已保留首批结果。'};
+    }
+  }
+  async function readSearchTerms(source, requests, force, prefetch = false) {
+    const responses = [];
+    for (let index = 0; index < requests.length; index += 3) {
+      const batch = requests.slice(index, index + 3).map(term => readSourceTerm(source, term, force, prefetch));
+      responses.push(...await Promise.allSettled(batch));
+    }
+    const available = responses.flatMap(response => response.status === 'fulfilled' ? [response.value] : []);
+    if (!available.length) throw responses[0].reason;
+    const following = [];
+    for (let index = 0; index < requests.length; index++) {
+      const response = responses[index], term = requests[index];
+      if (response.status === 'rejected' && !prefetch) following.push(term);
+      if (response.value?.next) following.push({query: term.query, page: response.value.next});
+    }
+    return {
+      items: mergeReleases(available.flatMap(response => response.items)), following,
+      via: [...new Set(available.map(response => response.via).filter(Boolean))].join(' / '),
+      state: 'ok',
+      message: [...new Set([
+        ...available.map(response => response.message),
+        available.length < requests.length ? '部分关键词查询未完成，已显示成功返回的结果。' : '',
+      ].filter(Boolean))].join(' '),
+    };
+  }
+  function registerContinuation(source, terms) {
+    if (!terms?.length) return '';
+    const id = randomBytes(16).toString('hex');
+    continuations.set(id, {source, terms, at: now(), networkKey: network.cacheKey()});
+    return id;
+  }
+  async function searchProvider(source, query, coverage, force, firstSeason) {
+    const {aliases, extra} = await coverage;
+    const terms = [...new Set([...aliases, ...extra.names])];
+    if (source === 'vcb') return vcb(firstSeason || query, force, terms);
+    if (source === 'seadex') return seaDex(query, terms, force);
+    if (source === 'nyaa') terms.push(...extra.numbered);
     if (firstSeason && source === 'nyaa') {
       const latinName = terms.find(name => /^[\x20-\x7e]+$/.test(name) && /[a-z]/i.test(name));
       if (latinName && latinName.length + 4 <= 150) {
@@ -473,19 +578,8 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
           terms.push(numbered);
       }
     }
-    const variants = Promise.allSettled(terms.map(term => provider(source, term, force)));
-    const [[primary], extra] = await Promise.all([original, variants]);
-    const available = [primary, ...extra].filter(response => response.status === 'fulfilled').map(response => response.value);
-    if (!available.length) throw primary.reason;
-    return {
-      items: terms.length ? mergeReleases(available.flatMap(response => response.items)) : available[0].items,
-      via: [...new Set(available.map(response => response.via).filter(Boolean))].join(' / '),
-      state: 'ok',
-      message: [...new Set([
-        ...available.map(response => response.message),
-        available.length < terms.length + 1 ? '部分关键词查询未完成，已显示成功返回的结果。' : '',
-      ].filter(Boolean))].join(' '),
-    };
+    const queries = [...new Set([query, ...terms])];
+    return {...await readSearchTerms(source, queries.map(query => ({query, page: 1})), force, true), queries};
   }
   async function seaDex(query, aliases, force) {
     const terms = [...new Set([query, ...aliases].filter(Boolean))].slice(0, 5);
@@ -547,7 +641,7 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       const q = group.test(query) ? query : ('VCB-Studio ' + query).trim();
       const requests = [['dmhy', q], ['nyaa', q]];
       for (const term of terms) requests.push(['garden', term || q], ['mikan', term || q]);
-      const fallback = await Promise.allSettled(requests.map(([source, term]) => provider(source, term, force)));
+      const fallback = await Promise.allSettled(requests.map(([source, term]) => readSourceTerm(source, {query: term, page: 1}, force, true)));
       const available = fallback.flatMap((r, index) => r.status === 'fulfilled'
         ? [{ ...r.value, source: requests[index][0] }] : []);
       if (!available.length) throw new Error(reason + ' 公开发布站也暂时不可用。');
@@ -563,28 +657,48 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       };
     }, force);
   }
-  async function search({query='',sources=Object.keys(sourceNames),refresh=false,fuzzy=true}={}) {
+  async function search({query='',sources=Object.keys(sourceNames),refresh=false,fuzzy=true,cursor=''}={}) {
     query=String(query).trim().replace(/\s+/g,' ');if(Buffer.byteLength(query)>150)throw new Error('搜索词过长，请缩短到 150 字节以内。');if(!Array.isArray(sources)||!sources.length||sources.some(s=>!Object.hasOwn(sourceNames,s)))throw new Error('请选择有效的资源来源。');sources=[...new Set(sources)];
     for(const[id,entry]of results)if(now()-entry.at>1800000)results.delete(id);
+    for(const[id,entry]of continuations)if(now()-entry.at>1800000)continuations.delete(id);
     for(const[key,entry]of cache)if(!entry.pending&&now()-entry.at>120000)cache.delete(key);
+    if (cursor) {
+      const entry = continuations.get(cursor);
+      if (!entry || entry.networkKey !== network.cacheKey() || sources.length !== 1 || sources[0] !== entry.source)
+        throw new Error('后续页查询已过期，请重新搜索。');
+      const {source, terms} = entry;
+      const r = await readSearchTerms(source, terms, refresh);
+      return {items: r.items.map(remember), query, aliases: [], total: r.items.length, truncated: false,
+        providers: [{source, name: sourceNames[source], state: r.state, message: r.message,
+          via: r.via, count: r.items.length, next: registerContinuation(source, r.following)}]};
+    }
     const season = fuzzy ? seasonSuffix(query) : null;
     const firstSeason = season?.number === 1 ? season.title : '';
     const aliases = fuzzy && query
       ? titleAliases(query, refresh, season).then(names => [...new Set(firstSeason ? [firstSeason, ...names] : names)])
       : Promise.resolve(firstSeason ? [firstSeason] : []);
+    const coverage = aliases.then(async aliases => {
+      let extra = {names: [], numbered: []};
+      if (fuzzy && query && !season) {
+        try { extra = seriesTerms(await catalogPage(query, false), query, aliases); } catch {}
+      }
+      return {aliases, extra};
+    });
     const responses=await Promise.all(sources.map(async source=>{
       const start=now();
       try{
-        const r=await searchProvider(source,query,aliases,refresh,firstSeason);
+        const r=await searchProvider(source,query,coverage,refresh,firstSeason);
         const items=r.items;
-        return{source,name:sourceNames[source],state:r.state,message:r.message||'',via:r.via,count:items.length,elapsedMs:now()-start,items};
+        return{source,name:sourceNames[source],state:r.state,message:r.message||'',via:r.via,count:items.length,elapsedMs:now()-start,items,
+          next: registerContinuation(source, r.following), queries: r.queries || []};
       }catch(e){
         return{source,name:sourceNames[source],state:e.code==='BROWSER_REQUIRED'?'browser-required':'error',message:e.message,count:0,elapsedMs:now()-start,items:[]};
       }
     }));
     const merged = mergeReleases(responses.flatMap(r => r.items));
-    return {items: merged.map(remember), providers: responses.map(({items, ...status}) => status),
-      query, aliases: await aliases, fetchedAt: new Date(now()).toISOString(), total: merged.length, truncated: false};
+    const applied = [...new Set([...await aliases, ...responses.flatMap(r => r.queries || [])])].filter(term => term !== query);
+    return {items: merged.map(remember), providers: responses.map(({items, queries, ...status}) => status),
+      query, aliases: applied, fetchedAt: new Date(now()).toISOString(), total: merged.length, truncated: false};
   }
   async function resolve(id) {
     const entry=results.get(id);if(!entry||now()-entry.at>1800000)throw new Error('这条搜索结果已过期，请重新搜索。');let item={...entry.item};

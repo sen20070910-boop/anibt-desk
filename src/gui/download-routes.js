@@ -468,6 +468,7 @@ export function createDownloadRoutes(ctx) {
           ...(sources ? { sources: sources.split(",") } : {}),
           refresh: u.searchParams.get("refresh") === "1",
           fuzzy: u.searchParams.get("fuzzy") !== "0",
+          cursor: u.searchParams.get("cursor") || "",
         }),
       );
       return;

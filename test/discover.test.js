@@ -247,6 +247,74 @@ test('an explicit first season also searches its unnumbered title and keeps retu
   assert.equal((await discovery.search({ query, sources: ['garden'], fuzzy: false })).total, 0);
 });
 
+test('a known series search includes canonical first/second-season spellings and Nyaa short season terms', async () => {
+  const queries = new Map([
+    ['金牌得主', 1], ['金牌得主第一季', 2], ['金牌得主第二季', 3], ['Medalist S01', 4], ['Medalist S02', 5],
+  ]);
+  const page = [
+    {bgmId: 1, title: {chinese: '金牌得主', romaji: 'Medalist', native: 'メダリスト'}},
+    {bgmId: 2, title: {chinese: '金牌得主 第二季', romaji: 'Medalist (2026)', native: 'メダリスト 第2期'}},
+    {bgmId: 3, title: {chinese: '不相关作品 第二季', romaji: 'Another Show S2'}},
+  ];
+  const calls = [];
+  const nyaaRss = items => '<rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa"><channel>' + items + '</channel></rss>';
+  const network = {
+    cacheKey: () => 'test',
+    async read(address) {
+      const url = new URL(address);
+      if (url.hostname === 'anibt.net') return {text: JSON.stringify({page})};
+      const term = url.searchParams.get('q');
+      calls.push(term);
+      const id = queries.get(term);
+      const item = id ? `<item><title>${term}</title><nyaa:infoHash>${String(id).repeat(40)}</nyaa:infoHash></item>` : '';
+      return {text: nyaaRss(item)};
+    },
+  };
+  const search = createDiscovery(() => ({}), {network}).search;
+  const results = await search({query: '金牌得主', sources: ['nyaa']});
+  assert.deepEqual(new Set(results.items.map(item => item.title)), new Set(queries.keys()));
+  assert.ok(!calls.includes('不相关作品 第二季'));
+  const explicit = await search({query: '金牌得主第一季', sources: ['nyaa']});
+  assert.ok(explicit.items.every(item => results.items.some(row => row.infoHash === item.infoHash)));
+  assert.equal((await search({query: '金牌得主', sources: ['nyaa'], fuzzy: false})).items.length, 1);
+});
+
+test('Nyaa continuation follows real HTML pagination and returns older resources separately', async () => {
+  const newer = Array.from({length: 75}, (_, index) => `<item><title>新发布 ${index}</title>
+    <nyaa:infoHash>${(index + 1).toString(16).padStart(40, '0')}</nyaa:infoHash></item>`).join('');
+  const olderHash = 'b'.repeat(40);
+  const calls = [];
+  const network = {
+    cacheKey: () => 'test',
+    async read(address) {
+      const url = new URL(address);
+      calls.push(url);
+      if (url.searchParams.get('page') === 'rss') return {text: `<rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa"><channel>${newer}</channel></rss>`};
+      const index = url.searchParams.get('p');
+      const hash = index === '2' ? olderHash : 'c'.repeat(40);
+      return {text: `<table class="torrent-list"><tbody><tr>
+        <td></td><td><a href="/view/100">旧发布第 ${index} 页</a></td>
+        <td><a href="/download/100.torrent">torrent</a><a href="magnet:?xt=urn:btih:${hash}">magnet</a></td>
+        <td>2.0 GiB</td><td data-timestamp="1735689600"></td><td>12</td>
+        </tr></tbody></table>${index === '2' ? '<ul class="pagination"><li><a href="/?p=3">3</a></li></ul>' : ''}`};
+    },
+  };
+  const search = createDiscovery(() => ({}), {network}).search;
+  const options = {query: '测试作品', sources: ['nyaa'], fuzzy: false};
+  const start = await search(options);
+  assert.equal(start.items.length, 75);
+  const second = await search({...options, cursor: start.providers[0].next});
+  assert.equal(second.items[0].infoHash, olderHash);
+  assert.equal(second.items[0].seeders, 12);
+  assert.equal(second.items[0].publishedAt, '2025-01-01T00:00:00.000Z');
+  const third = await search({...options, cursor: second.providers[0].next});
+  assert.equal(third.items[0].title, '旧发布第 3 页');
+  assert.equal(third.providers[0].next, '');
+  assert.deepEqual(calls.map(url => [url.searchParams.get('q'), url.searchParams.get('p')]),
+    [['测试作品', null], ['测试作品', '2'], ['测试作品', '3']]);
+  await assert.rejects(search({...options, sources: ['garden'], cursor: start.providers[0].next}), /后续页/);
+});
+
 test('resource discovery includes older search pages and keeps results past the former merged limit', async () => {
   const hashOf = index => index.toString(16).padStart(40, '0');
   const network = {

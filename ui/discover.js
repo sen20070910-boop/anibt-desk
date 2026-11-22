@@ -244,12 +244,18 @@ function renderProviders() {
     error: '连接失败', 'browser-required': '需浏览器验证' };
   $('discovery-providers').innerHTML = D.providers.map(p => `<div class="provider-status ${p.state === 'ok' ? 'online' : p.state === 'fallback' ? 'fallback' : p.state === 'pending' ? 'pending' : 'offline'}">
     <span class="tiny-dot"></span><strong>${escape(p.name)}</strong><span>${escape(states[p.state] || p.state)}</span>
-    <small>${p.count == null ? '' : p.count + ' 条'}${p.via ? ' · ' + escape(p.via) : ''}</small>
+    <small>${p.count == null ? '' : p.count + ' 条'}${p.via ? ' · ' + escape(p.via) : ''}${p.next ? ' · 可继续查找' : ''}</small>
     ${p.state === 'error' ? '<button type="button" class="text-button" data-retry-source="' + escape(p.source) + '">重试</button>' : ''}
   </div>`).join('');
   const warnings = D.providers.filter(p => p.message).map(p => p.name + '：' + p.message);
   text('discovery-notice', warnings.join(' '));
   $('discovery-notice').classList.toggle('hidden', !warnings.length);
+  const older = $('discovery-older');
+  const sources = D.providers.filter(provider => provider.next).map(provider => provider.name);
+  older.classList.toggle('hidden', !sources.length && !D.search?.loadingOlder);
+  older.disabled = Boolean(D.busy || D.search?.loadingOlder);
+  older.textContent = D.search?.loadingOlder ? '正在查找旧资源…' : '继续查找旧资源';
+  older.title = sources.length ? '还可继续查询 ' + sources.join('、') : '';
 }
 function filteredDiscoverItems() {
   const language = $('discovery-language').value, resolution = $('discovery-resolution').value;
@@ -331,22 +337,27 @@ function mergeDiscoveryPages(pages) {
   return [...byRelease.values()].sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0));
 }
 
-async function readDiscoveryProvider(search, source, force) {
+async function readDiscoveryProvider(search, source, force, cursor = '') {
   const index = search.sources.indexOf(source);
-  D.providers[index] = { source, name: sourceLabel[source], state: 'pending' };
+  const previous = D.providers[index];
+  D.providers[index] = { ...previous, source, name: sourceLabel[source], state: 'pending' };
   renderProviders();
   try {
     const params = new URLSearchParams({ q: search.query, sources: source, fuzzy: search.fuzzy ? '1' : '0' });
     if (force) params.set('refresh', '1');
+    if (cursor) params.set('cursor', cursor);
     const result = await api('discover/search?' + params);
     if (D.search !== search) return;
     D.providers[index] = result.providers?.find(provider => provider.source === source)
       || { source, name: sourceLabel[source], state: 'ok', count: result.items.length };
-    search.pages.set(source, result.items);
+    const items = cursor ? mergeDiscoveryPages([search.pages.get(source) || [], result.items]) : result.items;
+    search.pages.set(source, items);
+    D.providers[index].count = items.length;
     for (const alias of result.aliases || []) search.aliases.add(alias);
   } catch (error) {
     if (D.search !== search) return;
-    D.providers[index] = { source, name: sourceLabel[source], state: 'error', message: error.message, count: 0 };
+    D.providers[index] = { source, name: sourceLabel[source], state: 'error',
+      message: error.message, count: cursor ? previous.count : 0, next: cursor };
   }
   D.items = mergeDiscoveryPages([...search.pages.values()]);
   D.loaded = true;
@@ -384,6 +395,7 @@ async function searchDiscover(force = false, replace = false) {
       D.busy = false;
       $('discovery-submit').disabled = false;
       $('discovery-submit').innerHTML = icon('search') + '搜索资源';
+      renderProviders();
       renderDiscover();
     }
   }
@@ -393,7 +405,22 @@ $('discovery-providers').addEventListener('click', guarded(async event => {
   const source = event.target.closest('[data-retry-source]')?.dataset.retrySource;
   if (source && D.search?.sources.includes(source) &&
       D.providers.find(provider => provider.source === source)?.state === 'error')
-    await readDiscoveryProvider(D.search, source, true);
+    await readDiscoveryProvider(D.search, source, true, D.providers.find(provider => provider.source === source)?.next);
+}));
+
+$('discovery-older').addEventListener('click', guarded(async () => {
+  const search = D.search;
+  if (!search || D.busy || search.loadingOlder) return;
+  const requests = D.providers.filter(provider => provider.next);
+  if (!requests.length) return;
+  search.loadingOlder = true;
+  renderProviders();
+  try {
+    await Promise.all(requests.map(provider => readDiscoveryProvider(search, provider.source, false, provider.next)));
+  } finally {
+    search.loadingOlder = false;
+    if (D.search === search) renderProviders();
+  }
 }));
 function needsDiscoverySubtitleCheck(item) {
   return S.status?.config.filters.languages.includes('CHS') && !item.languages.includes('CHS');
