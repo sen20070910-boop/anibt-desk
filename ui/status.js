@@ -143,10 +143,13 @@ function renderQb(previousTorrents) {
           const percent = (progress * 100).toFixed(1);
           const hash = escape(t.hash);
           const name = escape(t.name);
+          const added = t.addedAt
+            ? ` · 添加于 <time datetime="${new Date(t.addedAt).toISOString()}">${date(t.addedAt)}</time>`
+            : "";
           return `<div class="download-card" data-qb-hash="${hash}">
             <div class="download-top"><span class="download-name" title="${name}">${name}</span><span class="badge ${t.progress >= 1 ? "success" : ""}">${escape(stateLabel(t.state))}</span></div>
             <div class="progress-track" role="progressbar" aria-label="${name}下载进度" aria-valuenow="${percent}"><div class="progress-fill" style="--download-progress:${progress}"></div></div>
-            <div class="download-meta"><span>${percent}% · ${bytes(t.size)}</span><span>${t.downloadSpeed ? bytes(t.downloadSpeed) + "/s" : "暂无下载速度"}</span></div>
+            <div class="download-meta"><span>${percent}% · ${bytes(t.size)}${added}</span><span>${t.downloadSpeed ? bytes(t.downloadSpeed) + "/s" : "暂无下载速度"}</span></div>
             <p class="download-location" title="${escape(t.savePath)}">下载目录：${escape(t.savePath || "由 qBittorrent 决定")}</p>
             <div class="download-shortcuts"><button type="button" class="button secondary" data-qb-folder="${hash}">打开保存目录</button><button type="button" class="button secondary" data-qb-details="${hash}">快捷操作 / 文件状态</button></div>
           </div>`;

@@ -20,6 +20,29 @@ async function fixture(t,deps={},options={}) {
   return{dir,c,configFile,base,request};
 }
 
+test('download cards show managed qB tasks newest first, with undated tasks last', async t => {
+  const tasks = [
+    { name: '旧任务', added_on: 1700000000, state: 'stalledUP' },
+    { name: '添加时间未知', added_on: -1, state: 'downloading' },
+    { name: '新任务', added_on: 1700000200, state: 'stoppedDL' },
+    { name: '正在下载', added_on: 1700000100, state: 'downloading' },
+    { name: '其他下载', added_on: 1700000300, category: 'other' },
+  ].map((task, index) => ({ category: defaults.qb.category, hash: String(index).repeat(40), ...task }));
+  const qb = {
+    login: async () => '5.2', logout: async () => {},
+    list: async () => tasks,
+    request: async () => new Response(JSON.stringify({ save_path: 'D:/Video' })),
+  };
+  const f = await fixture(t, { qb });
+  const snapshot = await f.request('qb');
+  assert.equal(snapshot.status, 200);
+  assert.deepEqual(snapshot.data.torrents.map(task => [task.name, task.addedAt]), [
+    ['新任务', 1700000200000], ['正在下载', 1700000100000],
+    ['旧任务', 1700000000000], ['添加时间未知', null],
+  ]);
+  assert.equal(tasks[0].name, '旧任务');
+});
+
 test('existing collection selection adds only newly requested files and rejects stale priority changes', async t => {
   const files = [
     {index:1,name:'Demo - 01.mkv',size:100,priority:6,progress:1},

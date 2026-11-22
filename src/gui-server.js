@@ -762,17 +762,22 @@ export function makeApplication({
             (c.qb.category && t.category === c.qb.category) ||
             hashes.has(t.hash),
         )
-        .map((t) => ({
-          name: t.name,
-          hash: t.hash,
-          progress: t.progress,
-          size: t.size || t.total_size,
-          downloadSpeed: t.dlspeed,
-          uploadSpeed: t.upspeed,
-          state: t.state,
-          eta: t.eta,
-          savePath: t.save_path,
-        }));
+        .map((t) => {
+          const addedAt = new Date(t.added_on * 1000).getTime();
+          return {
+            name: t.name,
+            hash: t.hash,
+            addedAt: addedAt > 0 ? addedAt : null,
+            progress: t.progress,
+            size: t.size || t.total_size,
+            downloadSpeed: t.dlspeed,
+            uploadSpeed: t.upspeed,
+            state: t.state,
+            eta: t.eta,
+            savePath: t.save_path,
+          };
+        })
+        .sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
       value = {
         connected: true,
         version,
