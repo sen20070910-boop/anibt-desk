@@ -100,6 +100,7 @@ try {
   assert.ok(!html.includes("__APP_VERSION__"));
   assert.ok(html.includes(build.version));
   assert.ok(html.includes('id="page-rankings"'));
+  assert.ok(html.includes('id="ratings-search-form"'));
   assert.equal(
     fs.existsSync(config),
     false,

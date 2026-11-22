@@ -174,3 +174,26 @@ test("combined ranking validates the requested chart before using the network", 
   await assert.rejects(api.ranking("combined", 1, false, "special"), /分类/);
   await assert.rejects(api.ranking("combined", 0, false, "tv"), /页码/);
 });
+
+test("the formal chart reaches rank 200 on page eight while still comparing the full eligible pool", async () => {
+  const ranking = createCombinedRankings(
+    async (source) =>
+      sample(
+        source,
+        Array.from({ length: 250 }, (_, index) =>
+          game(source, String(index + 1000), "作品 " + index),
+        ),
+      ),
+    key,
+  );
+  const first = await ranking("tv", 1);
+  const last = await ranking("tv", 8);
+  assert.equal(first.metadata.eligible, 250);
+  assert.equal(first.metadata.ranked, 200);
+  assert.equal(last.totalPages, 8);
+  assert.equal(last.items[0].rank, 176);
+  assert.equal(last.items.at(-1).rank, 200);
+  assert.equal(last.items.at(-1).topPercent, 100);
+  assert.equal(last.hasNext, false);
+  assert.equal((await ranking("tv", 9)).items.length, 0);
+});

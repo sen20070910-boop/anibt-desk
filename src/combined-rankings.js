@@ -1,4 +1,5 @@
 const pageSize = 25;
+const officialLimit = 200;
 const cacheMs = 6 * 60 * 60 * 1000;
 const refreshDelay = 60_000;
 const minimumReference = 75;
@@ -280,8 +281,8 @@ export function createCombinedRankings(
         ) ||
           (!previous.partial && summary.partial) ||
           (summary.partial &&
-            !summary.official.length &&
-            previous.official.length))
+            Math.min(officialLimit, summary.official.length) <
+              Math.min(officialLimit, previous.official.length)))
       ) {
         const retained = { ...previous, stale: true, checkedAt: now() };
         if (networkKey() === generation) snapshots.set(category, retained);
@@ -311,7 +312,9 @@ export function createCombinedRankings(
     limited = false,
   ) {
     const snapshot = await read(category, refresh);
-    const rows = limited ? snapshot.limited : snapshot.official;
+    const rows = limited
+      ? snapshot.limited
+      : snapshot.official.slice(0, officialLimit);
     const offset = (page - 1) * pageSize;
     const items = rows.slice(offset, offset + pageSize).map((row) => ({
       ...row,
@@ -333,10 +336,12 @@ export function createCombinedRankings(
     return {
       source: "combined",
       page,
+      totalPages: Math.max(1, Math.ceil(rows.length / pageSize)),
       items,
       hasNext: offset + pageSize < rows.length,
       metadata: {
-        ranked: snapshot.official.length,
+        ranked: Math.min(officialLimit, snapshot.official.length),
+        eligible: snapshot.official.length,
         limited: snapshot.limited.length,
         partial: snapshot.partial,
         stale: snapshot.stale,

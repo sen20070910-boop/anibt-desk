@@ -290,14 +290,10 @@ export function createAnimeRatings(preferences, options = {}) {
   }
 
   async function readSample(source, category) {
-    // The first two pages supply nominations. The other windows broaden
-    // each site's reference distribution without crawling the catalogue.
-    const offsets = {
-      bangumi: [0, 50, 150, 350, 650],
-      mal: [0, 50, 200, 450, 850],
-      anilist: [0, 50, 200, 400, 750],
-      douban: [0, 50, 150, 270, 420],
-    }[source];
+    // Read contiguous leading pages so a title can match a lower placement
+    // on another source. Only a bounded slice of each public chart is read.
+    const count = source === "douban" ? 10 : 12;
+    const offsets = Array.from({ length: count }, (_, index) => index * 50);
     const pages = [];
     for (let index = 0; index < offsets.length; index += 2) {
       const batch = await Promise.allSettled(
@@ -318,10 +314,7 @@ export function createAnimeRatings(preferences, options = {}) {
     if (pages.filter((rows) => rows.length >= 10).length < 3) return null;
     return {
       rows: sample,
-      candidateIds: pages
-        .slice(0, 2)
-        .flat()
-        .map((row) => row.id),
+      candidateIds: sample.map((row) => row.id),
       complete: pages.every((rows) => rows.length >= 10),
     };
   }
@@ -341,7 +334,7 @@ export function createAnimeRatings(preferences, options = {}) {
       (source !== "combined" && !RATING_SOURCES.includes(source)) ||
       !Number.isInteger(page) ||
       page < 1 ||
-      page > 20
+      page > (source === "combined" ? 100 : 20)
     )
       throw Error("排行榜来源或页码无效。");
     if (

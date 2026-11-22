@@ -21,6 +21,7 @@
     items: [],
     loaded: false,
   };
+  const search = { request: 0, input: null, items: [] };
   const dialog = $("ratings-dialog");
   const ready = new Map();
   const formatter = new Intl.NumberFormat("zh-CN");
@@ -112,7 +113,7 @@
       ? "正在读取四站样本并计算综合排行…"
       : "正在读取 " + labels[source] + " 榜单…";
     status.className = "notice";
-    $("rankings-results").replaceChildren();
+    if (!refresh) $("rankings-results").replaceChildren();
     $("rankings-pager").classList.add("hidden");
     $("rankings-refresh").disabled = true;
     ranking.loaded = true;
@@ -126,6 +127,10 @@
       if (limited) params.set("view", "limited");
       const result = await api("ratings/ranking?" + params);
       if (request !== ranking.request) return;
+      if (result.totalPages && page > result.totalPages) {
+        ranking.page = result.totalPages;
+        return loadRanking();
+      }
       ranking.items = result.items;
       status.textContent = result.items.length ? "" : "这个范围暂无榜单条目。";
       status.className = result.items.length ? "hidden" : "notice";
@@ -136,7 +141,15 @@
         .join("");
       $("rankings-prev").disabled = page <= 1;
       $("rankings-next").disabled = !result.hasNext;
-      text("rankings-page", "第 " + page + " 页");
+      const totalPages = result.totalPages || (result.hasNext ? 20 : page);
+      const pageSelect = $("rankings-page");
+      pageSelect.replaceChildren(
+        ...Array.from(
+          { length: totalPages },
+          (_, index) => new Option("第 " + (index + 1) + " 页", index + 1),
+        ),
+      );
+      pageSelect.value = String(page);
       $("rankings-pager").classList.toggle(
         "hidden",
         page === 1 && !result.hasNext,
@@ -176,7 +189,11 @@
         metadata.limited +
         " 部 · 更新于 " +
         date +
-        "。参考样本 " +
+        "。" +
+        (metadata.eligible > metadata.ranked
+          ? "共 " + metadata.eligible + " 部达到三站门槛。"
+          : "") +
+        "参考样本 " +
         sample +
         "。",
     );
@@ -323,7 +340,7 @@
   function open(work) {
     if (!work.title) return;
     activeWork = work;
-    text("ratings-dialog-title", work.title);
+    text("ratings-dialog-title", work.displayTitle || work.title);
     $("ratings-combined-summary").classList.add("hidden");
     $("ratings-retry").classList.remove("hidden");
     $("ratings-retry").disabled = false;
@@ -353,6 +370,137 @@
     if (!dialog.open) dialog.showModal();
   }
 
+  const searchKey = (value) => norm(value).replace(/[^\p{L}\p{N}]/gu, "");
+  const findNames = (row) =>
+    [row.title, row.originalTitle, ...(row.titleAliases || [])].filter(Boolean);
+  function openSearchItem(row) {
+    open({
+      title: [...new Set(findNames(row))].slice(0, 4).join(" / "),
+      displayTitle: row.title,
+      year: row.year,
+      format: row.format,
+      ids: { bangumi: row.bgmId },
+    });
+  }
+
+  function searchCard(row, index) {
+    const type = {
+      TV: "剧集",
+      TV_SHORT: "短篇剧集",
+      MOVIE: "剧场版",
+      SPECIAL: "特别篇",
+      OVA: "OVA",
+      ONA: "网络动画",
+    };
+    const cover =
+      icon("library") +
+      (row.cover
+        ? '<img class="ranking-poster" data-cover-url="' +
+          escape(row.cover) +
+          '" alt="" decoding="async">'
+        : "");
+    const original =
+      row.originalTitle && row.originalTitle !== row.title
+        ? row.originalTitle
+        : "";
+    return `<article class="panel ranking-card">
+      <span class="ranking-poster ranking-poster-empty ratings-search-poster" aria-hidden="true">${cover}</span>
+      <div class="ranking-body">
+        <div class="ranking-meta">${escape([row.year, type[row.format]].filter(Boolean).join(" · "))}</div>
+        <h3>${escape(row.title)}</h3>
+        ${original ? `<div class="ranking-meta ratings-search-original">${escape(original)}</div>` : ""}
+        <div class="ranking-actions">
+          <button class="button secondary" data-rating-search-score="${index}">查看评分</button>
+          <button class="text-button" data-rating-search-find="${index}">找资源</button>
+        </div>
+      </div>
+    </article>`;
+  }
+
+  function showSearchView(visible) {
+    $("ratings-search-view").classList.toggle("hidden", !visible);
+    $("rankings-view").classList.toggle("hidden", visible);
+    $("rankings-refresh").classList.toggle("hidden", visible);
+  }
+
+  async function searchWorks() {
+    const field = $("ratings-search-query");
+    const query = field.value.trim();
+    if (!query) {
+      field.value = "";
+      field.reportValidity();
+      return;
+    }
+    const date = /\s*[(（]((?:19|20)\d{2})[)）]$/.exec(query);
+    const title = date?.index ? query.slice(0, date.index).trim() : query;
+    const year = date?.index ? date[1] : "";
+    const request = ++search.request;
+    search.input = { title, year };
+    search.items = [];
+    showSearchView(true);
+    $("ratings-search-results").replaceChildren();
+    $("ratings-search-direct").classList.add("hidden");
+    text("ratings-search-status", "正在搜索「" + query + "」…");
+    try {
+      const result = await api(
+        "anibt/catalog?" + new URLSearchParams({ q: title }),
+      );
+      if (request !== search.request) return;
+      search.items = year
+        ? result.items.filter((row) => String(row.year || "") === year)
+        : result.items;
+      $("ratings-search-results").innerHTML = search.items
+        .map(searchCard)
+        .join("");
+      $("ratings-search-direct").classList.remove("hidden");
+      text(
+        "ratings-search-status",
+        search.items.length
+          ? "找到 " + search.items.length + " 部作品。可按年份和季数选择。"
+          : "番剧目录未找到匹配作品，可以按输入名称直接查询四站。",
+      );
+      const exact = search.items.filter((row) =>
+        findNames(row).some((name) => searchKey(name) === searchKey(title)),
+      );
+      if (exact.length === 1 && S.page === "rankings") openSearchItem(exact[0]);
+    } catch {
+      if (request !== search.request) return;
+      text(
+        "ratings-search-status",
+        "番剧目录暂时无法读取，可以按输入名称直接查询四站。",
+      );
+      $("ratings-search-direct").classList.remove("hidden");
+    }
+  }
+
+  $("ratings-search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void searchWorks();
+  });
+  $("ratings-search-direct").addEventListener("click", () => {
+    if (search.input) open(search.input);
+  });
+  $("ratings-search-back").addEventListener("click", () => {
+    search.request++;
+    showSearchView(false);
+    $("ratings-search-query").focus();
+  });
+  $("ratings-search-results").addEventListener(
+    "click",
+    guarded(async (event) => {
+      const scoreButton = event.target.closest("[data-rating-search-score]");
+      const findButton = event.target.closest("[data-rating-search-find]");
+      if (scoreButton)
+        openSearchItem(
+          search.items[Number(scoreButton.dataset.ratingSearchScore)],
+        );
+      if (findButton)
+        await window.AniBTDiscover.find(
+          search.items[Number(findButton.dataset.ratingSearchFind)].title,
+        );
+    }),
+  );
+
   for (const button of document.querySelectorAll("[data-rating-source]")) {
     button.addEventListener("click", () => {
       if (ranking.source === button.dataset.ratingSource) return;
@@ -365,16 +513,23 @@
       void loadRanking();
     });
   }
+  function goToRankingPage(page) {
+    if (page === ranking.page) return;
+    ranking.page = page;
+    window.scrollTo({ top: 0, behavior: "instant" });
+    void loadRanking();
+  }
   for (const [id, delta] of [
     ["rankings-prev", -1],
     ["rankings-next", 1],
   ]) {
-    $(id).addEventListener("click", () => {
-      ranking.page += delta;
-      window.scrollTo({ top: 0, behavior: "instant" });
-      void loadRanking();
-    });
+    $(id).addEventListener("click", () =>
+      goToRankingPage(ranking.page + delta),
+    );
   }
+  $("rankings-page").addEventListener("change", (event) =>
+    goToRankingPage(Number(event.target.value)),
+  );
   $("rankings-refresh").addEventListener("click", () => void loadRanking(true));
   for (const id of ["rankings-category", "rankings-limited"]) {
     $(id).addEventListener("change", () => {

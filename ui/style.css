@@ -280,7 +280,7 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
   margin-bottom: 18px;
 }
 .rankings-toolbar .source-selector { margin: 0; }
-#rankings-category {
+#rankings-category, #rankings-page {
   max-width: 100%;
   color: var(--ink);
   background: var(--paper);
@@ -353,6 +353,7 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 .ranking-actions { margin-top: 11px; }
 .ranking-actions .button { padding: 7px 10px; }
 .rankings-pager { justify-content: center; margin: 20px 0 8px; }
+#rankings-page { min-height: 35px; padding-inline: 10px; cursor: pointer; }
 #rankings-status:not(.hidden) { margin-bottom: 15px; }
 .discovery-rating-button { padding: 3px 5px; min-height: 25px; }
 .resource-card h3 {
@@ -400,3 +401,16 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 .rankings-method p { margin: 8px 0 2px; overflow-wrap: anywhere; }
 #rankings-limited-control { min-height: 32px; padding-inline: 4px; }
 #ratings-combined-summary { margin: 0 0 8px; line-height: 1.6; }
+
+.ratings-search-form { padding: 15px 20px; margin-bottom: 18px; }
+.ratings-search-form .discovery-query { min-width: 0; }
+.ratings-search-heading { flex-wrap: wrap; margin-top: 18px; }
+.ratings-search-heading h3 { margin: 0; }
+.ratings-search-heading > div { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+#ratings-search-status { margin: 0 0 14px; font-size: 12px; }
+.ratings-search-original { overflow-wrap: anywhere; }
+.ratings-search-poster > svg, .ratings-search-poster > img { grid-area: 1 / 1; }
+.ratings-search-poster > img:not([src]), .ratings-search-poster > img[hidden] { display: none; }
+@media (max-width: 520px) {
+  .ratings-search-form { padding: 12px; }
+}

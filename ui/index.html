@@ -73,6 +73,22 @@
           <div><h2>动画口碑榜</h2><p>查看综合或单站评分，找到喜欢的作品后直接搜索资源。</p></div>
           <button class="button secondary" id="rankings-refresh"><span data-icon="refresh"></span>刷新榜单</button>
         </div>
+        <form id="ratings-search-form" class="panel ratings-search-form discovery-search-form" role="search" aria-label="搜索番剧评分">
+          <div class="discovery-query"><span data-icon="search"></span><input id="ratings-search-query" type="search" maxlength="100" required placeholder="输入中文名、日文名或英文名" aria-label="番剧名称"></div>
+          <button type="submit" class="button primary" id="ratings-search-submit"><span data-icon="search"></span>搜索评分</button>
+        </form>
+        <section id="ratings-search-view" class="hidden" aria-labelledby="ratings-search-heading">
+          <div class="section-heading ratings-search-heading">
+            <h3 id="ratings-search-heading">搜索结果</h3>
+            <div>
+              <button type="button" class="text-button hidden" id="ratings-search-direct">按输入名称查四站</button>
+              <button type="button" class="text-button" id="ratings-search-back">返回榜单</button>
+            </div>
+          </div>
+          <p id="ratings-search-status" class="muted" role="status" aria-live="polite"></p>
+          <div id="ratings-search-results" class="rankings-grid"></div>
+        </section>
+        <div id="rankings-view">
         <div class="panel rankings-toolbar">
           <div class="source-selector" role="group" aria-label="榜单来源">
             <button class="source-chip selected" data-rating-source="combined" aria-pressed="true">综合排行</button>
@@ -90,7 +106,7 @@
         </div>
         <details id="rankings-method" class="panel rankings-method hidden">
           <summary>计算方式与榜单覆盖</summary>
-          <p>各站前 100 部提供候选，再用多个榜单深度的同类作品校准百分位。各站等权，Bangumi 和 AniList 的小样本评分向本站样本均值校正。正式排名至少需要三站评分。</p>
+          <p>每类最多展示 200 名。各站取同类榜单的前 500～600 部作品，按样本百分位等权合成。Bangumi 和 AniList 的小样本评分会向本站样本均值校正。正式排名至少需要三站评分。站间最高和最低百分位相差 20 点及以上会标记分歧。</p>
           <p id="rankings-coverage" class="muted"></p>
           <p id="rankings-stability" class="muted"></p>
         </details>
@@ -98,8 +114,9 @@
         <div id="rankings-results" class="rankings-grid"></div>
         <div class="rankings-pager hidden" id="rankings-pager">
           <button class="button secondary" id="rankings-prev">上一页</button>
-          <span id="rankings-page" class="muted"></span>
+          <select id="rankings-page" aria-label="跳转榜单页码" title="选择页码"></select>
           <button class="button secondary" id="rankings-next">下一页</button>
+        </div>
         </div>
       </section>
 
