@@ -9,6 +9,7 @@ import { hasMultipleSubtitles, hasVideoExtension, subtitleLanguageCode, titleSub
 import { nyaaSubtitlePage, readNyaaSubtitleDetails } from './nyaa-subtitles.js';
 import { sourceLinks as historyLinks } from './history-actions.js';
 import { singleEpisode, episodeInReleaseTitle } from './episodes.js';
+import { bangumiNames, findBangumi } from './bangumi-catalog.js';
 
 export const sourceNames = {
   anibt: 'AniBT',
@@ -33,9 +34,27 @@ export function inferRelease(title,description='') {
   if(/简|簡|\bCHS\b|\bGB\b|\bGB2312\b|\bSC\b/i.test(text))languages.push('CHS');
   if(/繁|\bCHT\b|\bBIG5\b|\bTC\b/i.test(text))languages.push('CHT');
   if(/\[(?:EN|ENG|English)\]|English\s+(?:subs?|subtitles?)|英[文语語]字幕/i.test(text))languages.push('EN');
-  let workTitle=title.replace(/^[\[【][^\]】]+[\]】]\s*/,'').replace(/\s+(?:\d+-bit|(?:2160|1080|720|480)[pi]|BDRip|BluRay|WebRip|WEB-DL|HEVC|AVC|x26[45]).*$/i,'').replace(/\s*\[(?:\d{1,3}(?:v\d+)?|Fin|Reseed[^\]]*)\].*$/i,'').replace(/\s+-\s+\d{1,3}(?:v\d+)?\b.*$/i,'').trim();
-  if(!workTitle)workTitle=title;
+  const workTitle = releaseWorkTitle(title);
   return{workTitle,groupName:title.match(/^[\[【]([^\]】]+)[\]】]/)?.[1]||'',languages:[...new Set(languages)],resolution:title.match(/\b(2160p|1080p|720p|480p|4K)\b/i)?.[1]?.toLowerCase()||'',subtitles:/内封|內封/.test(text)?['INTERNAL']:/内嵌|內嵌/.test(text)?['EMBEDDED']:/外挂|外掛/.test(text)?['EXTERNAL']:[]};
+}
+const technicalTag = /^(?:\d{1,2}[ -]?bit|(?:2160|1080|720|480)[pi]|(?:1920|1280)[x×](?:1080|720)|4K|BD(?:Rip|Remux)?|Blu[ -]?Ray|UHD|WEB(?:[ -]?(?:DL|Rip))?|DVD(?:Rip)?|HEVC|AVC|AV1|[xh][ .]?26[45]|Dual[ -]?Audio|Multi(?:ple)?[ -]?Subs?|[A-F0-9]{8}|Fin|END|Reseed|CHS|CHT)(?![\p{L}\p{N}])/iu;
+export function releaseWorkTitle(title) {
+  const name = title.replace(/^[\[【][^\]】]+[\]】]\s*/, '').replace(/\.(?:mkv|mp4|avi|mov|m2ts|ts|webm|torrent)$/i, '').trim();
+  let end = name.length;
+  for (const match of name.matchAll(/[\[【(（]([^\]】)）]*)[\]】)）]?/gu)) {
+    if (!match.index) continue;
+    const tag = match[1].trim();
+    if (technicalTag.test(tag) || /^\d{1,3}(?:v\d+)?$/i.test(tag)) {
+      end = match.index;
+      break;
+    }
+  }
+  const spaced = name.slice(0, end).replace(/\s+(?:\d+[ -]?bit|(?:2160|1080|720|480)[pi]|BDRip|BluRay|WebRip|WEB-DL|HEVC|AVC|x26[45])\b.*$/i, '')
+    .replace(/\s+-\s+\d{1,3}(?:v\d+)?\b.*$/i, '').trim();
+  // Some release teams use dots between all words and technical fields.
+  const dotted = /\.(?:19|20)\d{2}(?=\.(?:BluRay|BDRip|WEB|\d{3,4}p)\b)/i.exec(spaced)
+    || /\.(?:BluRay|BDRip|WEB(?:-DL|Rip)?|(?:2160|1080|720|480)p)\b/i.exec(spaced);
+  return (dotted ? spaced.slice(0, dotted.index).replaceAll('.', ' ') : spaced) || title;
 }
 function validPage(url,base){if(typeof url!=='string'||!url.trim())return '';try{return sourceUrl(url,base);}catch{return '';}}
 function sizeBytes(text){const m=String(text).match(/([\d.]+)\s*([KMGT]?i?B)/i);if(!m)return 0;const power={B:0,K:1,M:2,G:3,T:4}[m[2][0].toUpperCase()]||0;return Number(m[1])*(/i/i.test(m[2])?1024:1000)**power;}
@@ -284,7 +303,7 @@ export function parseSeaDex(text, titles = new Map()) {
       const bytes = files.reduce((sum, file) => sum + (count(file?.length) || 0), 0);
       return [{
         title: (groupName ? '[' + groupName + '] ' : '') + workTitle + (video.length > 1 ? ' · ' + video.length + ' 个视频' : ''),
-        workTitle, groupName, languages: titleSubtitleCodes(filename), subtitles: [], resolution,
+        workTitle, groupName, anilistId: entry.alID, languages: titleSubtitleCodes(filename), subtitles: [], resolution,
         infoHash, magnet: magnetFor(infoHash, download.tracker), torrentUrl: download.torrentUrl, pageUrl,
         sizeBytes: bytes, sizeText: byteLabel(bytes), seeders: null, publishedAt: entry.updated,
         source: 'seadex', kind: 'release', seadexRating: raw.isBest === true ? 'best' : 'alt',
@@ -309,7 +328,7 @@ function seasonSuffix(title) {
 const yearSuffix = /\s*\((?:19|20)\d{2}\)$/;
 function catalogNames(row) {
   const { title, titleChinese, titleRomaji } = row;
-  return [title?.chinese, title?.chineseTraditional, titleChinese, title?.native || title?.japanese,
+  return [...(row.aliases || []), title?.chinese, title?.chineseTraditional, titleChinese, title?.native || title?.japanese,
     title?.romaji || titleRomaji, title?.english].filter(name => typeof name === 'string' && name.trim());
 }
 function matchingCatalogNames(page, query, season) {
@@ -357,7 +376,7 @@ function distinctAliases(query, names, limit = 3) {
 }
 export function createDiscovery(getPreferences,{network=createSourceNetwork(getPreferences),now=()=>Date.now()}={}) {
   const cache=new Map(),results=new Map();
-  const remember=item=>{const id=randomBytes(16).toString('hex');results.set(id,{item,at:now()});return{resultId:id,title:item.title,workTitle:item.workTitle,groupName:item.groupName,episode:singleEpisode(item.episode)||(!item.episode&&item.kind!=='project'?episodeInReleaseTitle(item.title):null),languages:item.languages,audioLanguages:item.audioLanguages,seadexRating:item.seadexRating,resolution:item.resolution,subtitles:item.subtitles,sizeText:item.sizeText,sizeBytes:item.sizeBytes,seeders:item.seeders,publishedAt:item.publishedAt,sources:item.sources,links:item.links,kind:item.kind,downloadable:!!(item.infoHash||item.torrentUrl||item.kind==='project'),description:item.description||'',infoHash:item.infoHash,multipleSubtitles:hasMultipleSubtitles(item.title),subtitleLookup:!!nyaaSubtitlePage(item)};};
+  const remember=item=>{const id=randomBytes(16).toString('hex');results.set(id,{item,at:now()});return{resultId:id,title:item.title,workTitle:item.workTitle,bgmId:item.bgmId,anilistId:item.anilistId,groupName:item.groupName,episode:singleEpisode(item.episode)||(!item.episode&&item.kind!=='project'?episodeInReleaseTitle(item.title):null),languages:item.languages,audioLanguages:item.audioLanguages,seadexRating:item.seadexRating,resolution:item.resolution,subtitles:item.subtitles,sizeText:item.sizeText,sizeBytes:item.sizeBytes,seeders:item.seeders,publishedAt:item.publishedAt,sources:item.sources,links:item.links,kind:item.kind,downloadable:!!(item.infoHash||item.torrentUrl||item.kind==='project'),description:item.description||'',infoHash:item.infoHash,multipleSubtitles:hasMultipleSubtitles(item.title),subtitleLookup:!!nyaaSubtitlePage(item)};};
   const memo=(key,run,force)=>{key=network.cacheKey()+'|'+key;const old=cache.get(key);if(old&&(old.pending||!force&&now()-old.at<120000))return old.promise;const promise=run();const entry={at:now(),promise,pending:true};cache.set(key,entry);promise.then(()=>entry.pending=false,()=>{if(cache.get(key)?.promise===promise)cache.delete(key);});return promise;};
   async function provider(source,query,force=false) {
     return memo(source+'|'+query,async()=>{
@@ -417,6 +436,14 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
         if (names.length) return distinctAliases(season?.number === 1 ? title : query, names);
       } catch {}
     }
+    try {
+      const names = await memo('title-alias-bangumi|' + query, () => findBangumi(network, query, rows => {
+        const page = rows.map(row => ({ bgmId: row.id, aliases: bangumiNames(row) }));
+        const matched = matchingCatalogNames(page, query, season);
+        return matched.length ? matched : null;
+      }), force);
+      if (names?.length) return distinctAliases(season?.number === 1 ? title : query, names);
+    } catch {}
     const original = season?.number === 1 ? title : query;
     return distinctAliases(original, [simplifiedTitle(original)]);
   }

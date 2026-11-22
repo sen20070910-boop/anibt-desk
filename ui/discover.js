@@ -243,7 +243,34 @@ function renderProviders() {
 }
 function filteredDiscoverItems(){let items=D.items.filter(item=>($('discovery-language').value!=='chs'||item.languages.includes('CHS'))&&(!$('discovery-resolution').value||item.resolution===$('discovery-resolution').value||$('discovery-resolution').value==='2160p'&&item.resolution==='4k'));const sort=$('discovery-sort').value,prefer=$('discovery-language').value==='prefer';items.sort((a,b)=>(prefer?Number(b.languages.includes('CHS'))-Number(a.languages.includes('CHS')):0)||(sort==='seeders'?(b.seeders??-1)-(a.seeders??-1):sort==='size'?(b.sizeBytes||0)-(a.sizeBytes||0):sort==='title'?a.workTitle.localeCompare(b.workTitle,'zh-CN'):(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0)));return items;}
 function workGroups(items){const grouped=new Map();for(const item of items){const key=norm(item.workTitle||item.title).replace(/\s+/g,' ');if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(item);}return[...grouped.values()];}
-function resultCard(items,index){const item=items[0],project=D.view==='projects';const sources=[...new Set(items.flatMap(i=>i.sources))];const added=items.every(isDiscoveredPresent);const sourceItem={sources};return`<article class="resource-card"><div class="resource-card-top"><span class="resource-mark">${project?icon('library'):icon('download')}</span><div class="resource-sources">${sourceTags(sourceItem)}</div>${added?'<span class="badge success">已在 qB</span>':''}</div><h3 title="${escape(project?item.workTitle:item.title)}">${escape(project?item.workTitle:item.title)}</h3><div class="resource-attributes">${subtitleBadge(items)}${seaDexBadge(items)}${item.resolution?`<span class="pill gray">${escape(item.resolution)}</span>`:''}${project?`<span class="pill gray">${items.length} 个发行版本</span>`:''}</div><p class="resource-group">${escape([...new Set(items.map(i=>i.groupName).filter(Boolean))].join(' · ')||'发布组未标注')}</p><div class="resource-card-bottom"><div><strong>${project&&items.length>1?'多个版本':escape(item.sizeText||'体积未提供')}</strong><small>${item.seeders==null?'做种数未提供':'做种 '+item.seeders}${item.publishedAt?' · '+date(item.publishedAt):''}</small></div><button class="button secondary" data-discover-index="${index}">${project?'选择版本':'查看并添加'} ${icon('chevron')}</button></div></article>`;}
+function discoverRatingWork(item) {
+  const title = item.workTitle || item.title;
+  const dated = /\s*[(（]((?:19|20)\d{2})[)）]$/.exec(title);
+  return { title: dated ? title.slice(0, dated.index) : title, year: dated?.[1],
+    ids: { bangumi: item.bgmId, anilist: item.anilistId } };
+}
+function resultCard(items, index) {
+  const item = items[0], project = D.view === 'projects';
+  const title = project ? item.workTitle : item.title;
+  const sources = [...new Set(items.flatMap(row => row.sources))];
+  const added = items.every(isDiscoveredPresent);
+  const group = [...new Set(items.map(row => row.groupName).filter(Boolean))].join(' · ');
+  const ratings = window.AniBTRatings?.summary(discoverRatingWork(item)) || '查看评分';
+  return `<article class="resource-card">
+    <div class="resource-card-top"><span class="resource-mark">${icon(project ? 'library' : 'download')}</span>
+      <div class="resource-sources">${sourceTags({ sources })}</div>${added ? '<span class="badge success">已在 qB</span>' : ''}</div>
+    <h3 title="${escape(title)}">${escape(title)}</h3>
+    <div class="resource-attributes">${subtitleBadge(items)}${seaDexBadge(items)}
+      ${item.resolution ? `<span class="pill gray">${escape(item.resolution)}</span>` : ''}
+      ${project ? `<span class="pill gray">${items.length} 个发行版本</span>` : ''}
+      <button class="text-button discovery-rating-button" title="查看四站评分" data-discover-rating="${index}">${escape(ratings)}</button></div>
+    <p class="resource-group">${escape(group || '发布组未标注')}</p>
+    <div class="resource-card-bottom">
+      <div><strong>${project && items.length > 1 ? '多个版本' : escape(item.sizeText || '体积未提供')}</strong>
+        <small>${item.seeders == null ? '做种数未提供' : '做种 ' + item.seeders}${item.publishedAt ? ' · ' + date(item.publishedAt) : ''}</small></div>
+      <button class="button secondary" data-discover-index="${index}">${project ? '选择版本' : '查看并添加'} ${icon('chevron')}</button></div>
+  </article>`;
+}
 function renderDiscover(){const items=filteredDiscoverItems();const groups=D.view==='projects'?workGroups(items):items.map(i=>[i]);D.renderedGroups=groups;text('discovery-result-title',D.view==='projects'?'作品与发行版本':'跨站发行资源');text('discovery-result-count',D.loaded?`${groups.length} ${D.view==='projects'?'部作品':'份资源'} · 同种子已合并来源`:'选择来源，搜索喜欢的作品');const results=$('discovery-results');
 if(!items.length&&D.providers.some(provider => provider.state === 'pending')){results.innerHTML=loadingResults('正在搜索资源…','各来源独立连接，单个来源暂不可用时仍会显示其他结果。');$('discovery-more').classList.add('hidden');return;}
 const wasLoading=results.firstElementChild?.classList.contains('discovery-loading');
@@ -265,6 +292,8 @@ function mergeDiscoveryPages(pages) {
     const seeders = Math.max(old.seeders ?? -1, item.seeders ?? -1);
     byRelease.set(key, {
       ...primary, links, sources: [...new Set([...old.sources, ...item.sources])],
+      bgmId: old.bgmId && item.bgmId && old.bgmId !== item.bgmId ? '' : old.bgmId || item.bgmId,
+      anilistId: old.anilistId && item.anilistId && old.anilistId !== item.anilistId ? '' : old.anilistId || item.anilistId,
       languages: [...new Set([...old.languages, ...item.languages])],
       audioLanguages: [...new Set([...(old.audioLanguages || []), ...(item.audioLanguages || [])])],
       seadexRating: old.seadexRating === 'best' || item.seadexRating === 'best' ? 'best' : old.seadexRating || item.seadexRating,
@@ -309,8 +338,8 @@ async function readDiscoveryProvider(search, source, force) {
   }
 }
 
-async function searchDiscover(force = false) {
-  if (D.busy) return;
+async function searchDiscover(force = false, replace = false) {
+  if (D.busy && !replace) return;
   if (!D.sources.size) throw new Error('请至少选择一个资源来源。');
   const search = {
     query: $('discovery-query').value.trim(), fuzzy: $('discovery-fuzzy').checked,
@@ -329,10 +358,12 @@ async function searchDiscover(force = false) {
   try {
     await Promise.all(search.sources.map(source => readDiscoveryProvider(search, source, force)));
   } finally {
-    D.busy = false;
-    $('discovery-submit').disabled = false;
-    $('discovery-submit').innerHTML = icon('search') + '搜索资源';
-    renderDiscover();
+    if (D.search === search) {
+      D.busy = false;
+      $('discovery-submit').disabled = false;
+      $('discovery-submit').innerHTML = icon('search') + '搜索资源';
+      renderDiscover();
+    }
   }
 }
 
@@ -604,7 +635,7 @@ window.AniBTDiscover={reopen:async key=>{
   changePage('discover');
   openDiscoverVariants([item],savePath);
   void loadDiscoveryFiles();
-},find:async(query,target=null)=>{D.progressTarget=target;D.loaded=true;$('discovery-query').value=query;changePage('discover');await searchDiscover();},refresh:()=>searchDiscover(true),enter:()=>{if(!D.loaded&&!D.busy)guarded(()=>searchDiscover())();else if(D.loaded)void refreshDiscoveryTasks(true);}};
+},find:async(query,target=null)=>{D.progressTarget=target;D.loaded=true;$('discovery-query').value=query;changePage('discover');await searchDiscover(false, true);},refresh:()=>searchDiscover(true),enter:()=>{if(!D.loaded&&!D.busy)guarded(()=>searchDiscover())();else if(D.loaded)void refreshDiscoveryTasks(true);}};
 $('discovery-search-form').addEventListener('submit',guarded(async e=>{e.preventDefault();await searchDiscover();}));
 for(const button of document.querySelectorAll('[data-source]'))button.addEventListener('click',()=>{const source=button.dataset.source;if(D.sources.has(source))D.sources.delete(source);else D.sources.add(source);renderSourceSelection();});
 $('discovery-select-all').addEventListener('click',()=>{D.sources=new Set(Object.keys(sourceLabel));renderSourceSelection();});
@@ -612,7 +643,22 @@ $('browse-vcb').addEventListener('click',guarded(async()=>{if(D.busy)return;D.pr
 for(const button of document.querySelectorAll('[data-discovery-view]'))button.addEventListener('click',()=>{D.view=button.dataset.discoveryView;D.shown=24;for(const b of document.querySelectorAll('[data-discovery-view]')){b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));}renderDiscover();});
 for(const id of ['discovery-language','discovery-resolution','discovery-sort'])$(id).addEventListener('change',()=>{D.shown=24;renderDiscover();});
 $('discovery-more').addEventListener('click',()=>{D.shown+=24;renderDiscover();});
-$('discovery-results').addEventListener('click',e=>{const button=e.target.closest('[data-discover-index]');if(button)openDiscoverDetail(Number(button.dataset.discoverIndex));});
+$('discovery-results').addEventListener('click', e => {
+  const ratingButton = e.target.closest('[data-discover-rating]');
+  if (ratingButton) {
+    const item = D.renderedGroups[Number(ratingButton.dataset.discoverRating)]?.[0];
+    if (item) window.AniBTRatings?.open(discoverRatingWork(item));
+    return;
+  }
+  const button = e.target.closest('[data-discover-index]');
+  if (button) openDiscoverDetail(Number(button.dataset.discoverIndex));
+});
+window.addEventListener('anibt-ratings-loaded', () => {
+  for (const button of $('discovery-results').querySelectorAll('[data-discover-rating]')) {
+    const item = D.renderedGroups[Number(button.dataset.discoverRating)]?.[0];
+    if (item) button.textContent = window.AniBTRatings.summary(discoverRatingWork(item));
+  }
+});
 $('discovery-variants').addEventListener('change', event => {
   if (event.target.name !== 'discover-version' || D.adding) return;
   if (discoveryBatch.active) toggleDiscoveryBatchItem(event.target);

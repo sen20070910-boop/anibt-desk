@@ -95,6 +95,7 @@ for (const file of [
   "ui/backfill.js",
   "ui/history.js",
   "ui/discover.js",
+  "ui/ratings.js",
   "ui/anibt.js",
   "ui/anibt-site-bridge.js",
   "ui/help.js",

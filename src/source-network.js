@@ -5,6 +5,9 @@ import { pipeline } from 'node:stream/promises';
 import { fetch, ProxyAgent } from 'undici';
 
 const hosts=new Set(['api.github.com','r2.anibt.net','anibt.net','www.dmhy.org','share.dmhy.org','dmhy.org','nyaa.si','vcb-s.com','www.vcb-s.com','api.animes.garden','animes.garden','www.animes.garden','mikanime.tv','mikanani.me','acg.rip','bangumi.moe','nekobt.to','seadex.moe','graphql.anilist.co']);
+for (const host of ['api.bgm.tv', 'myanimelist.net', 'movie.douban.com',
+  'lain.bgm.tv', 'cdn.myanimelist.net', 's4.anilist.co',
+  'img1.doubanio.com', 'img2.doubanio.com', 'img3.doubanio.com', 'img9.doubanio.com']) hosts.add(host);
 export function sourceUrl(value,base) {
   let u;try{u=new URL(value,base);}catch{throw new Error('资源链接无效。');}
   if(!['http:','https:'].includes(u.protocol)||!hosts.has(u.hostname)||u.username||u.password||u.port)throw new Error('不支持这个资源站点或地址。');
@@ -38,7 +41,8 @@ export function createSourceNetwork(getPreferences) {
   async function read(value,{binary=false,maxBytes=8_000_000,timeoutMs=15000,releaseRedirect=false,releaseAsset=false,destination,jsonBody}={}) {
     const url=releaseAsset?releaseAssetUrl(value):releaseRedirect?latestReleaseUrl(value):sourceUrl(value);const prefs=getPreferences();const mode=prefs.networkMode||'auto';const proxy=mode==='custom'?validateProxy(prefs.proxyUrl):await detectProxy()?'http://127.0.0.1:7890':'';
     const post = jsonBody !== undefined;
-    if (post && url !== 'https://graphql.anilist.co/') throw new Error('不支持向此地址提交查询。');
+    if (post && !['https://graphql.anilist.co/', 'https://api.bgm.tv/v0/search/subjects?limit=8'].includes(url))
+      throw new Error('不支持向此地址提交查询。');
     const proxyFirst=releaseAsset||releaseRedirect||['api.github.com','r2.anibt.net','dmhy.org','www.dmhy.org','share.dmhy.org','nyaa.si','vcb-s.com','www.vcb-s.com'].includes(new URL(url).hostname);
     const routes=mode==='direct'?['']:mode==='custom'?[proxy]:proxy?(proxyFirst?[proxy,'']:['',proxy]):[''];
     let last;
@@ -46,7 +50,7 @@ export function createSourceNetwork(getPreferences) {
       let target=url;
       for(let redirects=0;redirects<4;redirects++){
         let dispatcher;if(route){if(!agents.has(route))agents.set(route,new ProxyAgent(route));dispatcher=agents.get(route);}
-        const r=await fetch(target,{...(dispatcher?{dispatcher}:{}),...(releaseRedirect?{method:'HEAD'}:{}),...(post?{method:'POST',body:JSON.stringify(jsonBody)}:{}),redirect:'manual',headers:{'User-Agent':'AniBT-qB/1.3 (+local personal resource search)','Accept':binary?'application/x-bittorrent, application/octet-stream':'application/rss+xml, application/xml, text/html, application/json;q=0.9','Accept-Language':'zh-CN,zh;q=0.9,en;q=0.7',...(post?{'Content-Type':'application/json'}:{})},signal:AbortSignal.timeout(timeoutMs)});
+        const r=await fetch(target,{...(dispatcher?{dispatcher}:{}),...(releaseRedirect?{method:'HEAD'}:{}),...(post?{method:'POST',body:JSON.stringify(jsonBody)}:{}),redirect:'manual',headers:{'User-Agent':new URL(target).hostname==='api.bgm.tv'?'sen20070910-boop/anibt-desk (+https://github.com/sen20070910-boop/anibt-desk)':'AniBT-qB/1.3 (+local personal resource search)','Accept':binary?'application/x-bittorrent, application/octet-stream':'application/rss+xml, application/xml, text/html, application/json;q=0.9','Accept-Language':'zh-CN,zh;q=0.9,en;q=0.7',...(post?{'Content-Type':'application/json'}:{})},signal:AbortSignal.timeout(timeoutMs)});
         if(releaseRedirect){
           const location=r.headers.get('location');
           if([301,302,303,307,308].includes(r.status)&&location)return {location};

@@ -89,6 +89,7 @@ try {
     "app.js",
     "settings.js",
     "status.js",
+    "ratings.js",
     "library-tools.js",
     "motion.js",
     "motion.css",
@@ -98,6 +99,7 @@ try {
   const html = await (await fetch(base + "/")).text();
   assert.ok(!html.includes("__APP_VERSION__"));
   assert.ok(html.includes(build.version));
+  assert.ok(html.includes('id="page-rankings"'));
   assert.equal(
     fs.existsSync(config),
     false,

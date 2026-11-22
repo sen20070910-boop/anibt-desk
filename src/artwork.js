@@ -1,6 +1,15 @@
 import {randomBytes} from 'node:crypto';
 import {createSourceNetwork} from './source-network.js';
 
+function isRatingCover(url) {
+  const { hostname, pathname } = url;
+  if (url.search) return false;
+  if (hostname === 'lain.bgm.tv') return /^(?:\/r\/\d+)?\/pic\/cover\//.test(pathname);
+  if (hostname === 'cdn.myanimelist.net') return /^\/images\/anime\//.test(pathname);
+  if (hostname === 's4.anilist.co') return /^\/file\/anilistcdn\/media\/anime\/cover\//.test(pathname);
+  return /^img[1239]\.doubanio\.com$/.test(hostname) && /^\/view\/photo\/s_ratio_poster\/public\//.test(pathname);
+}
+
 export function imageMime(buffer) {
   if(buffer[0]===255&&buffer[1]===216&&buffer[2]===255)return 'image/jpeg';
   if(buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return 'image/png';
@@ -31,7 +40,7 @@ export function createArtwork(preferences, deps={}) {
   return {
     register(value){
       let url;try{url=new URL(value);}catch{throw new Error('封面地址无效。');}
-      if(url.protocol!=='https:'||url.hostname!=='r2.anibt.net'||url.username||url.password||url.port||url.href.length>1800)throw new Error('仅允许 AniBT 官方封面图片。');
+      if(url.protocol!=='https:'||!(url.hostname==='r2.anibt.net'||isRatingCover(url))||url.username||url.password||url.port||url.href.length>1800)throw new Error('仅允许受支持的官方封面图片。');
       url.hash='';
       if(urls.has(url.href)){
         const id=urls.get(url.href);touch(id,images.get(id));return {src:'/covers/'+id};

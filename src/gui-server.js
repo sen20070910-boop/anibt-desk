@@ -85,6 +85,7 @@ import {
   verifyBackupPaths,
 } from "./migration.js";
 import { createArtwork } from "./artwork.js";
+import { createAnimeRatings } from "./anime-ratings.js";
 import {
   episodeContext,
   showContext,
@@ -359,6 +360,7 @@ const guiAssetNames = {
   "/backfill.js": "backfill.js",
   "/history.js": "history.js",
   "/discover.js": "discover.js",
+  "/ratings.js": "ratings.js",
   "/anibt.js": "anibt.js",
   "/help.js": "help.js",
   "/workbench.js": "workbench.js",
@@ -450,6 +452,7 @@ export function makeApplication({
     deps.animeResources || createAnimeResources(preferences);
   const fallbackResources = new Map();
   const artwork = deps.artwork || createArtwork(preferences);
+  const animeRatings = deps.animeRatings || createAnimeRatings(preferences);
   const animeCatalog = deps.animeCatalog || createAnimeCatalog(preferences);
   async function completedAnime(bgmId, title) {
     const anime = await lookupAnime(bgmId, title);
@@ -1383,6 +1386,46 @@ export function makeApplication({
         }
       }
       const route = req.method + " " + u.pathname;
+      if (route === "GET /api/ratings/ranking") {
+        const result = await animeRatings.ranking(
+          u.searchParams.get("source"),
+          Number(u.searchParams.get("page") ?? "1"),
+          u.searchParams.get("refresh") === "1",
+          u.searchParams.get("category") ?? "tv",
+        );
+        json(res, 200, {
+          ...result,
+          items: result.items.map((row) => {
+            let cover = "";
+            if (row.cover) {
+              try {
+                cover = artwork.register(row.cover).src;
+              } catch {}
+            }
+            return { ...row, cover };
+          }),
+        });
+        return;
+      }
+      if (route === "GET /api/ratings/lookup") {
+        const p = u.searchParams;
+        const result = await animeRatings.lookup(
+          {
+            title: p.get("title"),
+            year: p.get("year"),
+            format: p.get("format"),
+            ids: Object.fromEntries(
+              ["bangumi", "mal", "anilist", "douban"].map((source) => [
+                source,
+                p.get(source),
+              ]),
+            ),
+          },
+          p.get("refresh") === "1",
+        );
+        json(res, 200, result);
+        return;
+      }
       for (const handle of domainRoutes)
         if ((await handle({ route, req, res, body, u })) !== false) return;
 
@@ -1438,6 +1481,7 @@ export function makeApplication({
             watchSessions: true,
             diagnostics: true,
             releaseChecks: true,
+            animeRatings: true,
             seasonCatchup: true,
             historyShortcuts: true,
             discoveryAnimeFolders: true,

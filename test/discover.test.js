@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { normalizeHash,magnetHash,torrentInfoHash } from '../src/torrent.js';
 import { sourceUrl,validateProxy } from '../src/source-network.js';
-import { inferRelease,parseNyaa,parseDmhy,parseVcbProjects,mergeReleases,createDiscovery,parseAcgRip,parseMoe,parseNekoBt,parseSeaDex } from '../src/discover.js';
+import { inferRelease,releaseWorkTitle,parseNyaa,parseDmhy,parseVcbProjects,mergeReleases,createDiscovery,parseAcgRip,parseMoe,parseNekoBt,parseSeaDex } from '../src/discover.js';
 
 const encode=v=>Buffer.isBuffer(v)?Buffer.concat([Buffer.from(v.length+':'),v]):typeof v==='string'?encode(Buffer.from(v)):typeof v==='number'?Buffer.from('i'+v+'e'):Buffer.concat([Buffer.from('d'),...Object.keys(v).sort().flatMap(k=>[encode(k),encode(v[k])]),Buffer.from('e')]);
 const info={name:'local-test.txt',length:1,'piece length':16384,pieces:createHash('sha1').update('x').digest(),private:1};
@@ -18,6 +18,49 @@ test('torrent hash uses exact encoded info and rejects broken or duplicate dicti
 test('external fetch URL validation permits only supported hosts and proxy syntax',()=>{assert.equal(sourceUrl('http://share.dmhy.org/topics/view/1.html'),'https://share.dmhy.org/topics/view/1.html');for(const url of ['http://127.0.0.1/a','https://nyaa.si@evil.test/a','file:///c:/a','https://nyaa.si:8443/a'])assert.throws(()=>sourceUrl(url));assert.equal(validateProxy('http://127.0.0.1:7890'),'http://127.0.0.1:7890');assert.throws(()=>validateProxy('http://user:secret@127.0.0.1:7890'));});
 test('Nyaa RSS and DMHY search parse hash, subtitle, size, seeders and source links',()=>{const n=parseNyaa(rss)[0],d=parseDmhy(dmhy)[0];assert.equal(n.infoHash,d.infoHash);assert.deepEqual(n.languages,['CHS','CHT']);assert.equal(n.sizeBytes,1024**3);assert.equal(d.sizeBytes,1e9);assert.equal(n.seeders,8);assert.equal(d.seeders,3);assert.equal(d.pageUrl,'https://www.dmhy.org/topics/view/1_demo.html');assert.equal(n.workTitle,'测试作品');assert.throws(()=>parseNyaa('<html>login</html>'));assert.throws(()=>parseDmhy('<html>login</html>'));});
 test('subtitle inference does not claim simplified Chinese for unknown VCB subtitles',()=>{assert.deepEqual(inferRelease('[VCB-Studio] Demo 1080p HEVC').languages,[]);assert.deepEqual(inferRelease('[ANi] Demo [CHT]').languages,['CHT']);assert.ok(inferRelease('[Test] Demo [CHS]').languages.includes('CHS'));});
+
+test('work titles remove complete technical suffixes and keep the original release title', () => {
+  const prefix = 'One Piece Fan Letter';
+  for (const sample of [
+    '[HatSubs] One Piece Fan Letter (BD 1080p 10-bit Opus) [3D18E382].mkv',
+    '[MicroHatSubs] One Piece Fan Letter (WEB 1080p AV1 Opus) [B8B75D38].mkv',
+    '[One Pace] One Piece Fan Letter [1080p][99510B34].mkv',
+    'One Piece Fan Letter 1080p HEVC [Multiple Subtitle]',
+  ]) assert.equal(releaseWorkTitle(sample), prefix);
+  assert.equal(releaseWorkTitle('[Test] 作品 - 01 [CHS]'), '作品');
+  assert.equal(releaseWorkTitle('Tokyo Godfathers (2003) [BluRay.1080p.x264.FLAC].mkv'), 'Tokyo Godfathers (2003)');
+  assert.equal(releaseWorkTitle('[Test] Re:Zero (Season 2) [1080p]'), 'Re:Zero (Season 2)');
+});
+
+test('discover uses a verified Bangumi alternate title when AniBT supplies only the canonical spelling', async () => {
+  const query = '海贼王粉丝来信';
+  const row = { id: 518519, type: 2, name: 'ONE PIECE FAN LETTER', name_cn: '航海王：粉丝来信' };
+  const release = '[HatSubs] One Piece Fan Letter (BD 1080p 10-bit Opus) [3D18E382].mkv';
+  const network = {
+    cacheKey: () => 'test',
+    async read(address, options) {
+      const url = new URL(address);
+      if (url.hostname === 'anibt.net') return { text: JSON.stringify({page: [
+        { bgmId: row.id, title: { chinese: row.name_cn, native: row.name } },
+      ]}) };
+      if (url.pathname === '/v0/search/subjects') {
+        assert.equal(options.jsonBody.keyword, query);
+        return { text: JSON.stringify({data: [row]}) };
+      }
+      if (url.pathname === '/v0/subjects/518519') return {
+        text: JSON.stringify({...row, infobox: [{key: '别名', value: [{v: '海贼王 粉丝来信'}]}]}),
+      };
+      return { text: JSON.stringify({status: 'OK', resources: url.searchParams.get('search') === row.name
+        ? [{title: release, magnet: 'magnet:?xt=urn:btih:' + hash, provider: 'dmhy', providerId: '100'}] : []}) };
+    },
+  };
+  const discovery = createDiscovery(() => ({}), {network});
+  const result = await discovery.search({query, sources: ['garden']});
+  assert.deepEqual(result.aliases, [row.name_cn, row.name]);
+  assert.equal(result.items[0].title, release);
+  assert.equal(result.items[0].workTitle, 'One Piece Fan Letter');
+  assert.equal((await discovery.search({query, sources: ['garden'], fuzzy: false})).total, 0);
+});
 
 test('ACG.RIP uses its own public torrent and checks unknown hashes when resolving and reopening', async () => {
   const feed = '<rss xmlns:torrent="urn:test"><channel>'

@@ -2,6 +2,7 @@
 const paths = {
   home: "M3 10 12 3l9 7M5 9v12h14V9M9 21v-8h6v8",
   library: "M4 4h5v17H4zM12 4h4v17h-4zM19 5l3 15",
+  chart: "M4 20h16M5 16v-5h3v5zM10.5 16V5h3v11zM16 16V8h3v8z",
   download: "M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5",
   settings:
     "M10 3h4l1 3 3 1 3 3v4l-3 1-1 3-3 3h-4l-1-3-3-1-3-3v-4l3-1 1-3zM15 12a3 3 0 1 0-6 0 3 3 0 0 0 6 0",
@@ -61,6 +62,7 @@ const S = {
             "progress",
             "settings",
             "discover",
+            "rankings",
           ].includes(new URLSearchParams(location.search).get("page"))
         ? new URLSearchParams(location.search).get("page")
         : "overview",
@@ -169,6 +171,7 @@ function changePage(page) {
     {
       overview: "追番总览",
       discover: "发现资源",
+      rankings: "动漫排行",
       subscriptions: "追番管理",
       library: "番剧订阅",
       downloads: "下载记录",
@@ -191,6 +194,7 @@ function changePage(page) {
   if (page === "progress") window.AniBTWorkbench?.load();
   if (page === "help") window.AniBTHelp?.open();
   if (page === "discover") window.AniBTDiscover?.enter();
+  if (page === "rankings") window.AniBTRatings?.enter();
   if (page === "library") window.AniBTLibrary?.enter();
   window.scrollTo({ top: 0, behavior: "instant" });
   window.dispatchEvent(
@@ -372,6 +376,9 @@ async function refreshAll(force = false) {
         ? [window.AniBTDiscover.refresh()]
         : []),
       ...(force && S.page === "library" ? [window.AniBTLibrary.refresh()] : []),
+      ...(force && S.page === "rankings"
+        ? [window.AniBTRatings.refresh()]
+        : []),
     ]);
     const errors = results
       .filter((r) => r.status === "rejected")
