@@ -38,6 +38,14 @@
   function votes(row) {
     return row.votes ? formatter.format(row.votes) + " 人评分" : "";
   }
+  function poster(image = "") {
+    return (
+      '<span class="ranking-poster ranking-poster-empty ratings-poster" aria-hidden="true">' +
+      icon("library") +
+      image +
+      "</span>"
+    );
+  }
   function togglePageOptions(visible) {
     pageOptions.classList.toggle("hidden", !visible);
     pageTrigger.setAttribute("aria-expanded", String(visible));
@@ -72,18 +80,16 @@
         "/4 站" +
         (row.disagreement ? " · 站间分歧" : "")
       : votes(row);
-    const poster = /^\/covers\/[a-f0-9]{32}$/.test(row.cover)
+    const image = /^\/covers\/[a-f0-9]{32}$/.test(row.cover)
       ? '<img class="ranking-poster" src="' +
         escape(row.cover) +
         '" alt="" loading="lazy" decoding="async">'
-      : '<span class="ranking-poster ranking-poster-empty" aria-hidden="true">' +
-        icon("library") +
-        "</span>";
+      : "";
     return (
       '<article class="panel ranking-card rank-' +
       Math.min(row.rank, 4) +
       '">' +
-      poster +
+      poster(image) +
       '<div class="ranking-body"><div class="ranking-meta">' +
       rank +
       "<span>" +
@@ -411,19 +417,17 @@
       OVA: "OVA",
       ONA: "网络动画",
     };
-    const cover =
-      icon("library") +
-      (row.cover
-        ? '<img class="ranking-poster" data-cover-url="' +
-          escape(row.cover) +
-          '" alt="" decoding="async">'
-        : "");
+    const cover = row.cover
+      ? '<img class="ranking-poster" data-cover-url="' +
+        escape(row.cover) +
+        '" alt="" decoding="async">'
+      : "";
     const original =
       row.originalTitle && row.originalTitle !== row.title
         ? row.originalTitle
         : "";
     return `<article class="panel ranking-card">
-      <span class="ranking-poster ranking-poster-empty ratings-search-poster" aria-hidden="true">${cover}</span>
+      ${poster(cover)}
       <div class="ranking-body">
         <div class="ranking-meta">${escape([row.year, type[row.format]].filter(Boolean).join(" · "))}</div>
         <h3>${escape(row.title)}</h3>
@@ -578,6 +582,14 @@
   });
   window.addEventListener("anibt-page-change", () => togglePageOptions(false));
   $("rankings-refresh").addEventListener("click", () => void loadRanking(true));
+  $("rankings-results").addEventListener(
+    "error",
+    (event) => {
+      if (event.target.matches("img.ranking-poster"))
+        event.target.hidden = true;
+    },
+    true,
+  );
   for (const id of ["rankings-category", "rankings-limited"]) {
     $(id).addEventListener("change", () => {
       ranking.page = 1;

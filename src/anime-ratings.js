@@ -138,6 +138,18 @@ const anilistRow = (item) =>
 const malIdFrom = (value) =>
   /(?:^|myanimelist\.net)\/anime\/(\d+)(?:\/|$)/.exec(value ?? "")?.[1];
 
+function malPoster(value) {
+  try {
+    const url = new URL(value);
+    if (url.origin !== "https://cdn.myanimelist.net") return "";
+    const path = url.pathname.replace(/^\/r\/\d+x\d+\//, "/");
+    if (!/^\/images\/anime\//.test(path)) return "";
+    return url.origin + path;
+  } catch {
+    return "";
+  }
+}
+
 export function parseMalRanking(html) {
   const $ = load(html);
   if (!$("tr.ranking-list").length) throw Error("MyAnimeList 暂未返回排行榜。");
@@ -160,7 +172,7 @@ export function parseMalRanking(html) {
         score: row.find(".score .score-label").text().trim(),
         format: details.split(/[\s(]/)[0],
         year: details.match(/\b(?:19|20)\d{2}\b/)?.[0],
-        cover: img.attr("data-src") || img.attr("src"),
+        cover: malPoster(img.attr("data-src")) || malPoster(img.attr("src")),
       });
     })
     .filter(Boolean);

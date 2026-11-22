@@ -54,7 +54,7 @@ export function createArtwork(preferences, deps={}) {
       if(row.bytes)return row;
       if(row.pending)return row.pending;
       row.pending=slot(async()=>{
-        const response=await network.read(row.url,{binary:true,maxBytes:4_000_000});
+        const response=await network.read(row.url,{binary:true,image:true,maxBytes:4_000_000});
         const buffer=response.bytes,mime=imageMime(buffer);
         // Return valid bytes even when a single image exceeds a custom cache budget.
         if(buffer.length>maxBytes)return {...row,bytes:buffer,mime};

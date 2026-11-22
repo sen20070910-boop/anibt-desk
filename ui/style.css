@@ -456,8 +456,9 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 .ratings-search-heading > div { display: flex; flex-wrap: wrap; gap: 8px 14px; }
 #ratings-search-status { margin: 0 0 14px; font-size: 12px; }
 .ratings-search-original { overflow-wrap: anywhere; }
-.ratings-search-poster > svg, .ratings-search-poster > img { grid-area: 1 / 1; }
-.ratings-search-poster > img:not([src]), .ratings-search-poster > img[hidden] { display: none; }
+.ratings-poster > svg, .ratings-poster > img { grid-area: 1 / 1; }
+.ratings-poster > img:not([src]) { opacity: 0; }
+.ratings-poster > img[hidden] { display: none; }
 @media (max-width: 520px) {
   .ratings-search-form { padding: 12px; }
 }

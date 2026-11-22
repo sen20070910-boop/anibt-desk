@@ -147,3 +147,21 @@ test("ranking artwork allows validated poster paths only", () => {
     artwork.register("https://cdn.myanimelist.net/other/image.jpg"),
   );
 });
+
+test("MAL ranking rewrites signed thumbnail URLs to the official full-size anime cover", () => {
+  const [row] = parseMalRanking(`
+    <table><tr class="ranking-list">
+      <td class="rank">1</td>
+      <td><img src="/placeholder.png" data-src="https://cdn.myanimelist.net/r/50x70/images/anime/1015/138006.jpg?s=09c2f2">
+      <h3><a href="https://myanimelist.net/anime/52991">Frieren</a></h3></td>
+      <td class="score"><span class="score-label">9.2</span></td>
+    </tr></table>`);
+  assert.equal(
+    row.cover,
+    "https://cdn.myanimelist.net/images/anime/1015/138006.jpg",
+  );
+  assert.match(
+    createArtwork(() => ({})).register(row.cover).src,
+    /^\/covers\//,
+  );
+});

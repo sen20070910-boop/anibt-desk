@@ -38,7 +38,7 @@ export function createSourceNetwork(getPreferences) {
   const agents=new Map();let proxyProbe=null,proxyState={at:0,available:false};
   const detectProxy=async()=>{if(Date.now()-proxyState.at<30000)return proxyState.available;if(proxyProbe)return proxyProbe;proxyProbe=new Promise(resolve=>{const socket=net.connect({host:'127.0.0.1',port:7890});const end=available=>{socket.destroy();proxyState={at:Date.now(),available};resolve(available);};socket.setTimeout(500,()=>end(false));socket.once('connect',()=>end(true));socket.once('error',()=>end(false));}).finally(()=>proxyProbe=null);return proxyProbe;};
   const cacheKey=()=>{const p=getPreferences();return(p.networkMode||'auto')+'|'+(p.proxyUrl||'http://127.0.0.1:7890');};
-  async function read(value,{binary=false,maxBytes=8_000_000,timeoutMs=15000,releaseRedirect=false,releaseAsset=false,destination,jsonBody}={}) {
+  async function read(value,{binary=false,image=false,maxBytes=8_000_000,timeoutMs=15000,releaseRedirect=false,releaseAsset=false,destination,jsonBody}={}) {
     const url=releaseAsset?releaseAssetUrl(value):releaseRedirect?latestReleaseUrl(value):sourceUrl(value);const prefs=getPreferences();const mode=prefs.networkMode||'auto';const proxy=mode==='custom'?validateProxy(prefs.proxyUrl):await detectProxy()?'http://127.0.0.1:7890':'';
     const post = jsonBody !== undefined;
     if (post && !['https://graphql.anilist.co/', 'https://api.bgm.tv/v0/search/subjects?limit=8'].includes(url))
@@ -50,7 +50,11 @@ export function createSourceNetwork(getPreferences) {
       let target=url;
       for(let redirects=0;redirects<4;redirects++){
         let dispatcher;if(route){if(!agents.has(route))agents.set(route,new ProxyAgent(route));dispatcher=agents.get(route);}
-        const r=await fetch(target,{...(dispatcher?{dispatcher}:{}),...(releaseRedirect?{method:'HEAD'}:{}),...(post?{method:'POST',body:JSON.stringify(jsonBody)}:{}),redirect:'manual',headers:{'User-Agent':new URL(target).hostname==='api.bgm.tv'?'sen20070910-boop/anibt-desk (+https://github.com/sen20070910-boop/anibt-desk)':'AniBT-qB/1.3 (+local personal resource search)','Accept':binary?'application/x-bittorrent, application/octet-stream':'application/rss+xml, application/xml, text/html, application/json;q=0.9','Accept-Language':'zh-CN,zh;q=0.9,en;q=0.7',...(post?{'Content-Type':'application/json'}:{})},signal:AbortSignal.timeout(timeoutMs)});
+        const hostname = new URL(target).hostname;
+        const accept = image ? 'image/webp, image/png, image/jpeg, image/gif, image/*;q=0.8'
+          : binary ? 'application/x-bittorrent, application/octet-stream'
+          : 'application/rss+xml, application/xml, text/html, application/json;q=0.9';
+        const r=await fetch(target,{...(dispatcher?{dispatcher}:{}),...(releaseRedirect?{method:'HEAD'}:{}),...(post?{method:'POST',body:JSON.stringify(jsonBody)}:{}),redirect:'manual',headers:{'User-Agent':hostname==='api.bgm.tv'?'sen20070910-boop/anibt-desk (+https://github.com/sen20070910-boop/anibt-desk)':'AniBT-qB/1.3 (+local personal resource search)','Accept':accept,'Accept-Language':'zh-CN,zh;q=0.9,en;q=0.7',...(image&&/^img[1239]\.doubanio\.com$/.test(hostname)?{'Referer':'https://movie.douban.com/'}:{}),...(post?{'Content-Type':'application/json'}:{})},signal:AbortSignal.timeout(timeoutMs)});
         if(releaseRedirect){
           const location=r.headers.get('location');
           if([301,302,303,307,308].includes(r.status)&&location)return {location};
