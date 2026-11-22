@@ -205,12 +205,22 @@ function isDiscoveredPresent(item) {
 
 async function refreshDiscoveryTasks(force = false) {
   const request = ++D.tasksRequest;
-  const hashes = [...new Set([...D.variants, ...D.items].map(item => item.infoHash?.toLowerCase()).filter(hash => /^[a-f0-9]{40}$/.test(hash)))].slice(0, 240);
+  const visible = (D.renderedGroups || []).slice(0, D.shown).flat();
+  const hashes = [...new Set([...D.variants, ...visible].map(item => item.infoHash?.toLowerCase()).filter(hash => /^[a-f0-9]{40}$/.test(hash)))];
   let present = [];
   if (hashes.length) {
     try {
-      const result = await api('discover/tasks', { hashes, refresh: force });
-      if (result.connected) present = result.hashes;
+      const result = await api('discover/tasks', { hashes: hashes.slice(0, 240), refresh: force });
+      if (request !== D.tasksRequest) return;
+      if (result.connected) {
+        present = result.hashes;
+        const remaining = [];
+        for (let offset = 240; offset < hashes.length; offset += 240) {
+          remaining.push(api('discover/tasks', { hashes: hashes.slice(offset, offset + 240) }));
+        }
+        const checked = await Promise.allSettled(remaining);
+        present = present.concat(checked.flatMap(entry => entry.value?.connected ? entry.value.hashes : []));
+      }
     } catch {
       // If qB cannot be checked, the add request still verifies it before submitting.
     }
@@ -241,7 +251,23 @@ function renderProviders() {
   text('discovery-notice', warnings.join(' '));
   $('discovery-notice').classList.toggle('hidden', !warnings.length);
 }
-function filteredDiscoverItems(){let items=D.items.filter(item=>($('discovery-language').value!=='chs'||item.languages.includes('CHS'))&&(!$('discovery-resolution').value||item.resolution===$('discovery-resolution').value||$('discovery-resolution').value==='2160p'&&item.resolution==='4k'));const sort=$('discovery-sort').value,prefer=$('discovery-language').value==='prefer';items.sort((a,b)=>(prefer?Number(b.languages.includes('CHS'))-Number(a.languages.includes('CHS')):0)||(sort==='seeders'?(b.seeders??-1)-(a.seeders??-1):sort==='size'?(b.sizeBytes||0)-(a.sizeBytes||0):sort==='title'?a.workTitle.localeCompare(b.workTitle,'zh-CN'):(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0)));return items;}
+function filteredDiscoverItems() {
+  const language = $('discovery-language').value, resolution = $('discovery-resolution').value;
+  const sort = $('discovery-sort').value;
+  const timestamp = item => Date.parse(item.publishedAt) || 0;
+  const bySort = {
+    seeders: (a, b) => (b.seeders ?? -1) - (a.seeders ?? -1),
+    size: (a, b) => (b.sizeBytes || 0) - (a.sizeBytes || 0),
+    title: (a, b) => a.workTitle.localeCompare(b.workTitle, 'zh-CN'),
+    oldest: (a, b) => (timestamp(a) || Infinity) - (timestamp(b) || Infinity),
+    newest: (a, b) => timestamp(b) - timestamp(a),
+  };
+  const sortItems = bySort[sort] || bySort.newest;
+  return D.items.filter(item => (language !== 'chs' || item.languages.includes('CHS')) &&
+    (!resolution || item.resolution === resolution || (resolution === '2160p' && item.resolution === '4k')))
+    .sort((a, b) => (language === 'prefer' ? Number(b.languages.includes('CHS')) - Number(a.languages.includes('CHS')) : 0) ||
+      sortItems(a, b));
+}
 function workGroups(items){const grouped=new Map();for(const item of items){const key=norm(item.workTitle||item.title).replace(/\s+/g,' ');if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(item);}return[...grouped.values()];}
 function discoverRatingWork(item) {
   const title = item.workTitle || item.title;
@@ -271,7 +297,9 @@ function resultCard(items, index) {
       <button class="button secondary" data-discover-index="${index}">${project ? '选择版本' : '查看并添加'} ${icon('chevron')}</button></div>
   </article>`;
 }
-function renderDiscover(){const items=filteredDiscoverItems();const groups=D.view==='projects'?workGroups(items):items.map(i=>[i]);D.renderedGroups=groups;text('discovery-result-title',D.view==='projects'?'作品与发行版本':'跨站发行资源');text('discovery-result-count',D.loaded?`${groups.length} ${D.view==='projects'?'部作品':'份资源'} · 同种子已合并来源`:'选择来源，搜索喜欢的作品');const results=$('discovery-results');
+function renderDiscover(){const items=filteredDiscoverItems();const groups=D.view==='projects'?workGroups(items):items.map(i=>[i]);D.renderedGroups=groups;text('discovery-result-title',D.view==='projects'?'作品与发行版本':'跨站发行资源');
+const hidden = D.items.length - items.length;
+text('discovery-result-count',D.loaded?`${groups.length} ${D.view==='projects'?'部作品':'份资源'} · ${hidden ? '当前筛选隐藏 ' + hidden + ' 份资源' : '同种子已合并来源'}`:'选择来源，搜索喜欢的作品');const results=$('discovery-results');
 if(!items.length&&D.providers.some(provider => provider.state === 'pending')){results.innerHTML=loadingResults('正在搜索资源…','各来源独立连接，单个来源暂不可用时仍会显示其他结果。');$('discovery-more').classList.add('hidden');return;}
 const wasLoading=results.firstElementChild?.classList.contains('discovery-loading');
 results.innerHTML=groups.length?groups.slice(0,D.shown).map(resultCard).join(''):empty(D.loaded?'还没有找到符合条件的资源':'从一个喜欢的名字开始',D.loaded?'可以试试英文名、日文名、压制组名，或调整画质和字幕筛选。':'搜索新番、老番、合集和 VCB-S 发行作品，选好版本后直接加入 qBittorrent。','search');$('discovery-more').classList.toggle('hidden',groups.length<=D.shown);
@@ -316,22 +344,16 @@ async function readDiscoveryProvider(search, source, force) {
       || { source, name: sourceLabel[source], state: 'ok', count: result.items.length };
     search.pages.set(source, result.items);
     for (const alias of result.aliases || []) search.aliases.add(alias);
-    search.truncated ||= result.truncated;
   } catch (error) {
     if (D.search !== search) return;
     D.providers[index] = { source, name: sourceLabel[source], state: 'error', message: error.message, count: 0 };
   }
-  const results = mergeDiscoveryPages([...search.pages.values()]);
-  D.items = results.slice(0, 240);
+  D.items = mergeDiscoveryPages([...search.pages.values()]);
   D.loaded = true;
   text('discovery-aliases', search.aliases.size ? '同时搜索了 ' + [...search.aliases].join('、') : '');
   renderProviders();
   renderDiscover();
   if (!D.providers.some(provider => provider.state === 'pending')) {
-    if (!search.warned && (search.truncated || results.length > 240)) {
-      search.warned = true;
-      toast('结果较多，目前显示近期 240 份去重资源，可缩小范围。');
-    }
     void refreshDiscoveryTasks(true);
     if (search.query) void lookupDiscoverySubtitles(D.renderedGroups.slice(0, D.shown).flat()
       .filter(item => !item.languages.length && !item.subtitleDetails));
@@ -343,7 +365,7 @@ async function searchDiscover(force = false, replace = false) {
   if (!D.sources.size) throw new Error('请至少选择一个资源来源。');
   const search = {
     query: $('discovery-query').value.trim(), fuzzy: $('discovery-fuzzy').checked,
-    sources: [...D.sources], pages: new Map(), aliases: new Set(), truncated: false, warned: false,
+    sources: [...D.sources], pages: new Map(), aliases: new Set(),
   };
   D.search = search;
   D.busy = true;
@@ -641,8 +663,8 @@ for(const button of document.querySelectorAll('[data-source]'))button.addEventLi
 $('discovery-select-all').addEventListener('click',()=>{D.sources=new Set(Object.keys(sourceLabel));renderSourceSelection();});
 $('browse-vcb').addEventListener('click',guarded(async()=>{if(D.busy)return;D.progressTarget=null;D.sources=new Set(['vcb']);D.view='projects';$('discovery-query').value='';renderSourceSelection();for(const b of document.querySelectorAll('[data-discovery-view]')){const selected=b.dataset.discoveryView==='projects';b.classList.toggle('selected',selected);b.setAttribute('aria-pressed',String(selected));}await searchDiscover();}));
 for(const button of document.querySelectorAll('[data-discovery-view]'))button.addEventListener('click',()=>{D.view=button.dataset.discoveryView;D.shown=24;for(const b of document.querySelectorAll('[data-discovery-view]')){b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));}renderDiscover();});
-for(const id of ['discovery-language','discovery-resolution','discovery-sort'])$(id).addEventListener('change',()=>{D.shown=24;renderDiscover();});
-$('discovery-more').addEventListener('click',()=>{D.shown+=24;renderDiscover();});
+for(const id of ['discovery-language','discovery-resolution','discovery-sort'])$(id).addEventListener('change',()=>{D.shown=24;renderDiscover();void refreshDiscoveryTasks();});
+$('discovery-more').addEventListener('click',()=>{D.shown+=24;renderDiscover();void refreshDiscoveryTasks();});
 $('discovery-results').addEventListener('click', e => {
   const ratingButton = e.target.closest('[data-discover-rating]');
   if (ratingButton) {

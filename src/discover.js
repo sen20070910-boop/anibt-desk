@@ -77,7 +77,7 @@ export function parseAcgRip(text) {
     throw new Error('ACG.RIP 返回了无法识别的 RSS。');
   const channel = xml.parse(text)?.rss?.channel;
   if (!channel) throw new Error('ACG.RIP 没有返回资源列表。');
-  return array(channel.item).slice(0, 100).flatMap(raw => {
+  return array(channel.item).flatMap(raw => {
     const title = str(raw.title);
     const pageUrl = validPage(str(raw.link), 'https://acg.rip/');
     const id = pageUrl && /^https:\/\/acg\.rip\/t\/(\d+)$/.exec(pageUrl)?.[1];
@@ -96,7 +96,7 @@ export function parseMoe(text) {
   const data = JSON.parse(text);
   if (!Array.isArray(data?.torrents) || data.success === false)
     throw new Error('萌番组没有返回可识别的资源列表。');
-  return data.torrents.slice(0, 100).flatMap(raw => {
+  return data.torrents.flatMap(raw => {
     if (raw?.category_tag_id !== '549ef207fe682f7549f1ea90' ||
         !/^[a-f0-9]{24}$/i.test(raw._id ?? '') || typeof raw.title !== 'string' || !raw.title.trim()) return [];
     const title = raw.title.trim();
@@ -123,7 +123,7 @@ export function parseNekoBt(text) {
   const data = JSON.parse(text);
   if (data?.error !== false || !Array.isArray(data.data?.results))
     throw new Error('nekoBT 没有返回可识别的资源列表。');
-  return data.data.results.slice(0, 100).flatMap(raw => {
+  return data.data.results.flatMap(raw => {
     const infoHash = normalizeHash(raw?.infohash);
     const title = typeof raw?.title === 'string' ? raw.title.trim() : '';
     if (!title || !infoHash || !/^\d{1,20}$/.test(raw.id ?? '') || raw.hidden || raw.deleted) return [];
@@ -151,18 +151,18 @@ export function parseNekoBt(text) {
 export function parseNyaa(text) {
   if(/<!DOCTYPE|<!ENTITY/i.test(text)||XMLValidator.validate(text)!==true)throw new Error('Nyaa 返回了无法识别的内容。');
   const channel=xml.parse(text)?.rss?.channel;if(!channel)throw new Error('Nyaa 没有返回资源列表。');
-  return array(channel.item).slice(0,100).map(raw=>{const title=str(raw.title),hash=normalizeHash(raw['nyaa:infoHash']),pageUrl=validPage(str(raw.guid)||str(raw.link),'https://nyaa.si/');return{title,...inferRelease(title),infoHash:hash,magnet:hash?'magnet:?xt=urn:btih:'+hash+'&tr=https%3A%2F%2Fnyaa.tracker.wf%2Fannounce':'',torrentUrl:validPage(str(raw.link),'https://nyaa.si/'),pageUrl,sizeText:str(raw['nyaa:size']),sizeBytes:sizeBytes(raw['nyaa:size']),seeders:raw['nyaa:seeders']!==undefined?Number(raw['nyaa:seeders']):null,publishedAt:str(raw.pubDate),source:'nyaa',kind:'release'};}).filter(i=>i.title&&(i.infoHash||i.torrentUrl));
+  return array(channel.item).map(raw=>{const title=str(raw.title),hash=normalizeHash(raw['nyaa:infoHash']),pageUrl=validPage(str(raw.guid)||str(raw.link),'https://nyaa.si/');return{title,...inferRelease(title),infoHash:hash,magnet:hash?'magnet:?xt=urn:btih:'+hash+'&tr=https%3A%2F%2Fnyaa.tracker.wf%2Fannounce':'',torrentUrl:validPage(str(raw.link),'https://nyaa.si/'),pageUrl,sizeText:str(raw['nyaa:size']),sizeBytes:sizeBytes(raw['nyaa:size']),seeders:raw['nyaa:seeders']!==undefined?Number(raw['nyaa:seeders']):null,publishedAt:str(raw.pubDate),source:'nyaa',kind:'release'};}).filter(i=>i.title&&(i.infoHash||i.torrentUrl));
 }
 export function parseDmhy(text) {
   const $=load(text);const rows=$('#topic_list tbody tr');if(!$('#topic_list').length)throw new Error('动漫花园没有返回可识别的资源列表。');
-  return rows.slice(0,100).map((_,row)=>{const r=$(row),cells=r.children('td');const anchor=r.find('td.title>a[href*="/topics/view/"]').first();const title=anchor.text().trim();const magnet=r.find('a[href^="magnet:"]').first().attr('href')||r.find('[data-magnet]').first().attr('data-magnet')||'';const published=cells.eq(0).text().match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}/)?.[0];const sizeText=cells.eq(4).text().trim();const seeds=cells.eq(5).text().trim();return{title,...inferRelease(title),groupName:r.find('td.title .tag').text().trim()||inferRelease(title).groupName,infoHash:magnetHash(magnet),magnet,torrentUrl:'',pageUrl:validPage(anchor.attr('href'),'https://www.dmhy.org/'),sizeText,sizeBytes:sizeBytes(sizeText),seeders:/^\d+$/.test(seeds)?Number(seeds):null,publishedAt:published?published.replaceAll('/','-').replace(' ','T')+':00+08:00':'',source:'dmhy',kind:'release'};}).get().filter(i=>i.title&&i.infoHash);
+  return rows.map((_,row)=>{const r=$(row),cells=r.children('td');const anchor=r.find('td.title>a[href*="/topics/view/"]').first();const title=anchor.text().trim();const magnet=r.find('a[href^="magnet:"]').first().attr('href')||r.find('[data-magnet]').first().attr('data-magnet')||'';const published=cells.eq(0).text().match(/\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}/)?.[0];const sizeText=cells.eq(4).text().trim();const seeds=cells.eq(5).text().trim();return{title,...inferRelease(title),groupName:r.find('td.title .tag').text().trim()||inferRelease(title).groupName,infoHash:magnetHash(magnet),magnet,torrentUrl:'',pageUrl:validPage(anchor.attr('href'),'https://www.dmhy.org/'),sizeText,sizeBytes:sizeBytes(sizeText),seeders:/^\d+$/.test(seeds)?Number(seeds):null,publishedAt:published?published.replaceAll('/','-').replace(' ','T')+':00+08:00':'',source:'dmhy',kind:'release'};}).get().filter(i=>i.title&&i.infoHash);
 }
 export function parseAnimeGarden(text) {
   const data = JSON.parse(text);
   if (data?.status !== 'OK' || !Array.isArray(data.resources)) {
     throw new Error('Anime Garden 没有返回可识别的资源列表。');
   }
-  return data.resources.slice(0, 100).flatMap(raw => {
+  return data.resources.flatMap(raw => {
     const title = typeof raw?.title === 'string' ? raw.title.trim() : '';
     const infoHash = magnetHash(raw?.magnet);
     if (!title || !infoHash) return [];
@@ -231,7 +231,7 @@ export function parseMikan(text, now = Date.now()) {
       pageUrl: validPage(detail.attr('href'), mikanBase), sizeText, sizeBytes: sizeBytes(sizeText),
       seeders: null, publishedAt, source: 'mikan', kind: 'release',
     };
-  }).get().slice(0, 100);
+  }).get();
 }
 export function parseVcbProjects(text,base='https://vcb-s.com/') {
   const $=load(text);let nodes=$('article');if(!nodes.length)nodes=$('.post');
@@ -282,10 +282,10 @@ function publicTorrent(page) {
 export function parseSeaDex(text, titles = new Map()) {
   const data = JSON.parse(text);
   if (!Array.isArray(data?.items)) throw new Error('SeaDex 没有返回可识别的推荐列表。');
-  return data.items.slice(0, 12).flatMap(entry => {
+  return data.items.flatMap(entry => {
     const versions = entry?.expand?.trs;
     if (!Array.isArray(versions)) return [];
-    return versions.slice(0, 40).flatMap(raw => {
+    return versions.flatMap(raw => {
       const infoHash = normalizeHash(raw?.infoHash);
       const pageUrl = validPage(raw?.url);
       const download = pageUrl && publicTorrent(pageUrl);
@@ -350,11 +350,6 @@ function matchingCatalogNames(page, query, season) {
   return matches.size === 1 ? matches.values().next().value : [];
 }
 
-function canBeFirstSeason(item) {
-  const title = item.title.normalize('NFKC').replace(/^[\[【][^\]】]+[\]】]\s*/, '');
-  const laterSeason = /第\s*([一二三四五六七八九十百两\d]+)\s*[季期]|\b(?:s(\d+)(?:e\d+)?|season\s*(\d+)|(\d+)(?:st|nd|rd|th)\s+season)\b/gi;
-  return [...title.matchAll(laterSeason)].every(([, cn, short, prefix, suffix]) => cn === '一' || Number(cn || short || prefix || suffix) === 1);
-}
 // AniBT supplies the first and second names. Keep the common simplified
 // spelling of the Taiwanese title usable even when the catalog is offline.
 const knownTitleGroups = [
@@ -414,7 +409,25 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
         if (query) url.searchParams.set('query', query);
         parser = parseNekoBt;
       }
-      if(!url)throw new Error('不支持的来源。');const r=await network.read(url.href);return{items:parser(r.text),via:r.via,state:'ok'};
+      if (!url) throw new Error('不支持的来源。');
+      const first = await network.read(url.href);
+      const items = parser(first.text);
+      let via = first.via, message = '';
+      if (query && ((source === 'garden' && items.length >= 100) ||
+          (source === 'dmhy' && load(first.text)('a[href^="/topics/list/page/2?"]').length))) {
+        // The older search page is part of the same public query. Keep the
+        // first page if loading more fails.
+        if (source === 'garden') url.searchParams.set('page', '2');
+        else url.pathname = '/topics/list/page/2';
+        try {
+          const older = await network.read(url.href);
+          items.push(...parser(older.text));
+          via = [...new Set([via, older.via].filter(Boolean))].join(' / ');
+        } catch {
+          message = '后续搜索页暂时无法读取，已保留首批结果。';
+        }
+      }
+      return {items, via, state: 'ok', message};
     },force);
   }
   async function titleAliases(query, force, season) {
@@ -447,11 +460,19 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     const original = season?.number === 1 ? title : query;
     return distinctAliases(original, [simplifiedTitle(original)]);
   }
-  async function searchProvider(source, query, aliases, force) {
-    if (source === 'vcb') return vcb(query, force, await aliases);
+  async function searchProvider(source, query, aliases, force, firstSeason) {
+    if (source === 'vcb') return vcb(firstSeason || query, force, await aliases);
     if (source === 'seadex') return seaDex(query, await aliases, force);
     const original = Promise.allSettled([provider(source, query, force)]);
-    const terms = await aliases;
+    const terms = [...await aliases];
+    if (firstSeason && source === 'nyaa') {
+      const latinName = terms.find(name => /^[\x20-\x7e]+$/.test(name) && /[a-z]/i.test(name));
+      if (latinName && latinName.length + 4 <= 150) {
+        const numbered = latinName + ' S01';
+        if (catalogKey(query) !== catalogKey(numbered) && !terms.some(term => catalogKey(term) === catalogKey(numbered)))
+          terms.push(numbered);
+      }
+    }
     const variants = Promise.allSettled(terms.map(term => provider(source, term, force)));
     const [[primary], extra] = await Promise.all([original, variants]);
     const available = [primary, ...extra].filter(response => response.status === 'fulfilled').map(response => response.value);
@@ -460,7 +481,10 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
       items: terms.length ? mergeReleases(available.flatMap(response => response.items)) : available[0].items,
       via: [...new Set(available.map(response => response.via).filter(Boolean))].join(' / '),
       state: 'ok',
-      message: available.length < terms.length + 1 ? '部分关键词查询未完成，已显示成功返回的结果。' : '',
+      message: [...new Set([
+        ...available.map(response => response.message),
+        available.length < terms.length + 1 ? '部分关键词查询未完成，已显示成功返回的结果。' : '',
+      ].filter(Boolean))].join(' '),
     };
   }
   async function seaDex(query, aliases, force) {
@@ -551,14 +575,16 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     const responses=await Promise.all(sources.map(async source=>{
       const start=now();
       try{
-        const r=await searchProvider(source,source==='vcb'&&firstSeason?firstSeason:query,aliases,refresh);
-        const items=firstSeason?r.items.filter(canBeFirstSeason):r.items;
+        const r=await searchProvider(source,query,aliases,refresh,firstSeason);
+        const items=r.items;
         return{source,name:sourceNames[source],state:r.state,message:r.message||'',via:r.via,count:items.length,elapsedMs:now()-start,items};
       }catch(e){
         return{source,name:sourceNames[source],state:e.code==='BROWSER_REQUIRED'?'browser-required':'error',message:e.message,count:0,elapsedMs:now()-start,items:[]};
       }
     }));
-    const merged=mergeReleases(responses.flatMap(r=>r.items));const items=merged.slice(0,240).map(remember);return{items,providers:responses.map(({items,...status})=>status),query,aliases:await aliases,fetchedAt:new Date(now()).toISOString(),total:merged.length,truncated:merged.length>240};
+    const merged = mergeReleases(responses.flatMap(r => r.items));
+    return {items: merged.map(remember), providers: responses.map(({items, ...status}) => status),
+      query, aliases: await aliases, fetchedAt: new Date(now()).toISOString(), total: merged.length, truncated: false};
   }
   async function resolve(id) {
     const entry=results.get(id);if(!entry||now()-entry.at>1800000)throw new Error('这条搜索结果已过期，请重新搜索。');let item={...entry.item};

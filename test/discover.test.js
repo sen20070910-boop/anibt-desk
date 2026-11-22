@@ -216,7 +216,7 @@ test('catalog aliases expand a specific season and leave unrelated titles out', 
     ['新番 第二季', '新番の物語 第2期', 'New Anime S2']);
 });
 
-test('an explicit first season also searches its unnumbered title, while rejecting labeled sequels', async () => {
+test('an explicit first season also searches its unnumbered title and keeps returned releases from every season', async () => {
   const base = '药屋少女的呢喃';
   const query = base + ' 第一季';
   const releases = [
@@ -243,8 +243,68 @@ test('an explicit first season also searches its unnumbered title, while rejecti
   const discovery = createDiscovery(() => ({}), { network });
   const result = await discovery.search({ query, sources: ['garden'] });
   assert.ok(result.aliases.includes(base));
-  assert.deepEqual(result.items.map(item => item.title), releases.slice(0, 2));
+  assert.deepEqual(result.items.map(item => item.title), releases);
   assert.equal((await discovery.search({ query, sources: ['garden'], fuzzy: false })).total, 0);
+});
+
+test('resource discovery includes older search pages and keeps results past the former merged limit', async () => {
+  const hashOf = index => index.toString(16).padStart(40, '0');
+  const network = {
+    cacheKey: () => 'test',
+    async read(url) {
+      const address = new URL(url);
+      if (address.hostname === 'api.animes.garden') {
+        const older = address.searchParams.get('page') === '2';
+        const start = older ? 101 : 1;
+        const resources = Array.from({length: 100}, (_, index) => ({
+          title: older ? '测试作品 第一季 ' + index : '测试作品 第二季 ' + index,
+          magnet: 'magnet:?xt=urn:btih:' + hashOf(start + index),
+          provider: 'dmhy', providerId: String(start + index),
+          createdAt: older ? '2025-06-01' : '2026-06-01',
+        }));
+        return { text: JSON.stringify({status: 'OK', resources}) };
+      }
+      assert.equal(address.hostname, 'nyaa.si');
+      const items = Array.from({length: 60}, (_, index) => `<item><title>测试作品 第二季 Nyaa ${index}</title>
+        <nyaa:infoHash>${hashOf(201 + index)}</nyaa:infoHash><pubDate>2026-07-01</pubDate></item>`).join('');
+      return {text: '<rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa"><channel>' + items + '</channel></rss>'};
+    },
+  };
+  const result = await createDiscovery(() => ({}), { network }).search({
+    query: '测试作品', sources: ['garden', 'nyaa'], fuzzy: false,
+  });
+  assert.equal(result.items.length, 260);
+  assert.equal(result.total, 260);
+  assert.equal(result.truncated, false);
+  assert.match(result.items[259].title, /第一季/);
+  assert.equal(result.providers[0].count, 200);
+});
+
+test('DMHY follows the search next-page link and preserves the first page if it fails', async () => {
+  const calls = [];
+  let missing = false;
+  const network = {
+    cacheKey: () => 'test',
+    async read(address) {
+      const url = new URL(address);
+      calls.push([url.pathname, url.searchParams.get('keyword')]);
+      if (url.pathname.endsWith('/page/2')) {
+        if (missing) throw Error('next page is offline');
+        return {text: dmhy.replaceAll(hash, '2'.repeat(40)).replace('2026/11/01', '2025/11/01')};
+      }
+      return {text: dmhy + '<a href="/topics/list/page/2?keyword=ignored">下一頁</a>'};
+    },
+  };
+  const discovery = createDiscovery(() => ({}), { network });
+  const options = { query: '测试作品', sources: ['dmhy'], fuzzy: false };
+  assert.equal((await discovery.search(options)).total, 2);
+  assert.deepEqual(calls, [
+    ['/topics/list', '测试作品'], ['/topics/list/page/2', '测试作品'],
+  ]);
+  missing = true;
+  const fallback = await discovery.search({ ...options, refresh:true });
+  assert.equal(fallback.total, 1);
+  assert.match(fallback.providers[0].message, /保留首批结果/);
 });
 
 test('VCB-only searches find an alternate-name release on Mikan if the official site requires verification', async () => {
