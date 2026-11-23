@@ -9,6 +9,7 @@ import {manualWorkDisplayTitle,releaseWorkAliases} from './release-title.js';
 export const animeKey=animeIdentity;
 export const episodeNumber=singleEpisode;
 export function markShowWatched(entry, show, now = new Date().toISOString()) {
+  delete entry.rankWatchUndo;
   entry.watched = Math.max(show.watched || 0, show.latest || 0);
   entry.episodeStates = { ...show.episodeStates };
   for (let n = 1; n <= show.latest; n++) entry.episodeStates[n] = true;
@@ -23,7 +24,7 @@ export function isDirectDiscoveryRecord(job) {
 export function watchedLibraryKeys(tracking,config){const keys=new Set();for(const [key,entry]of Object.entries(tracking))if(entry.completedAt){keys.add(key);const linked=applyAnimeBindings([{animeTitle:entry.title,bgmId:entry.bgmId||''}],config)[0];keys.add(animeKey(linked));}return keys;}
 export function explicitEpisodeWatched(item,tracking,config){const linked=applyAnimeBindings([item],config)[0],entry=tracking[animeKey(linked)]||tracking['title:'+norm(item.animeTitle||item.title)];return entry?.episodeStates?.[String(episodeNumber(item.episode))]===true;}
 export function buildProgress({items=[],state,manual={},completed={},torrents=[],tracking={},config}){
-  tracking=normalizeTracking(tracking);
+  tracking=normalizeTracking(tracking,{includeUndo:false});
   const history=[
     ...Object.values(state.done),
     ...Object.entries(manual).map(([recordId, job]) => ({

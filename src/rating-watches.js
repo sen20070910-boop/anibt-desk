@@ -75,7 +75,8 @@ export function findRatingWatch(tracking, work, evidence) {
   return matches.length === 1 ? matches[0] : '';
 }
 
-export const ratingWatchStatus = entry => entry?.completedAt ? {
+export const ratingWatchStatus = (entry, key) => entry?.completedAt ? {
+  key, completedAt: entry.completedAt,
   watched: true,
   score: entry.personalReview?.score ?? null,
 } : null;

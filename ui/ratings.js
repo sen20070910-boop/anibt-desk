@@ -23,6 +23,9 @@
   };
   const search = { request: 0, input: null, items: [] };
   const dialog = $("ratings-dialog");
+  const unwatchDialog = $("rating-unwatch-dialog");
+  const unwatchConfirm = $("rating-unwatch-confirm");
+  let unwatchSelection;
   const pageTrigger = $("rankings-page");
   const pageOptions = $("rankings-page-options");
   const ready = new Map();
@@ -47,7 +50,7 @@
 
   function watchBadge(status) {
     return status?.watched
-      ? '<span class="badge success">已看</span>' + (status.score == null ? "" :
+      ? '<button type="button" class="badge success" data-rating-unwatch aria-haspopup="dialog" title="管理已看标记">已看</button>' + (status.score == null ? "" :
         '<span>我的评分 ' + escape(formatter.format(status.score)) + ' / 10</span>')
       : "";
   }
@@ -98,6 +101,41 @@
       button.disabled = false;
     }
   }
+
+  function openUnwatch(badge, rows, container) {
+    const button = badge.closest("article").querySelector("[data-rating-watch]");
+    const row = rows[Number(button.dataset.ratingWatch)];
+    if (!row?.watch?.key || unwatchDialog.open) return;
+    unwatchSelection = { row, button, container, ...row.watch };
+    text("rating-unwatch-title", row.title);
+    unwatchDialog.showModal();
+  }
+
+  unwatchDialog.addEventListener("cancel", event => {
+    if (unwatchConfirm.disabled) event.preventDefault();
+  });
+  unwatchConfirm.addEventListener("click", guarded(async () => {
+    const { row, button, container, key, completedAt } = unwatchSelection;
+    const buttons = [...unwatchDialog.querySelectorAll("button")];
+    buttons.forEach(control => { control.disabled = true; });
+    watchRequests.delete(container);
+    try {
+      await api("progress/show/restore", { key, completedAt });
+      unwatchDialog.close();
+      if (button.isConnected) {
+        paintWatch(row, button, null);
+        button.focus({ preventScroll: true });
+      }
+      toast("已取消已看标记。");
+    } catch (error) {
+      unwatchDialog.close();
+      throw error;
+    } finally {
+      buttons.forEach(control => { control.disabled = false; });
+      void syncWatches(ranking.items, $("rankings-results"));
+      void syncWatches(search.items, $("ratings-search-results"));
+    }
+  }));
 
   function score(row) {
     return row.score == null
@@ -629,6 +667,8 @@
   $("ratings-search-results").addEventListener(
     "click",
     guarded(async (event) => {
+      const badge = event.target.closest("[data-rating-unwatch]");
+      if (badge) return openUnwatch(badge, search.items, $("ratings-search-results"));
       const watch = event.target.closest("[data-rating-watch]");
       if (watch) return openWatch(watch, search.items[Number(watch.dataset.ratingWatch)], $("ratings-search-results"));
       const scoreButton = event.target.closest("[data-rating-search-score]");
@@ -718,6 +758,8 @@
   $("rankings-results").addEventListener(
     "click",
     guarded(async (event) => {
+      const badge = event.target.closest("[data-rating-unwatch]");
+      if (badge) return openUnwatch(badge, ranking.items, $("rankings-results"));
       const watch = event.target.closest("[data-rating-watch]");
       if (watch) return openWatch(watch, ranking.items[Number(watch.dataset.ratingWatch)], $("rankings-results"));
       const find = event.target.closest("[data-ranking-find]");

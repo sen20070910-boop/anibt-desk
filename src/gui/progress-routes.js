@@ -15,6 +15,7 @@ import { randomBytes } from "node:crypto";
 import { validateReview } from "../reviews.js";
 import { loadState, statePath } from "../runner.js";
 import { buildProgress, markShowWatched } from "../progress.js";
+import { clearWatchedMark } from "../rank-watch-undo.js";
 import { manualWorkReset } from "../forget-manual-work.js";
 import {
   recheckDeletionWarnings,
@@ -190,6 +191,7 @@ export function createProgressRoutes(ctx) {
       entry.episodeStates = {};
       entry.archived = false;
       delete entry.completedAt;
+      delete entry.rankWatchUndo;
       delete entry.personalReview;
       tracking[body.key] = entry;
       if (entryKey !== body.key) delete tracking[entryKey];
@@ -271,10 +273,12 @@ export function createProgressRoutes(ctx) {
         throw new Error("番剧信息无效。");
       const tracking = ctx.readTracking();
       const entryKey = ctx.trackedKey(tracking, body.key);
-      if (!tracking[entryKey]?.completedAt)
+      const entry = tracking[entryKey];
+      if (!entry?.completedAt)
         throw new Error("这部番不在我看过的列表中。");
-      delete tracking[entryKey].completedAt;
-      tracking[entryKey].archived = false;
+      if (body.completedAt !== undefined && body.completedAt !== entry.completedAt)
+        throw Object.assign(new Error("已看记录已更新，请重新核对。"), { status: 409 });
+      clearWatchedMark(entry);
       ctx.atomicWrite(ctx.trackingFile, tracking);
       ctx.json(res, 200, { ok: true });
       return;

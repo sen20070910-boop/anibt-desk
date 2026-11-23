@@ -332,6 +332,8 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 .ranking-meta { color: var(--muted); font-size: 11px; }
 .rating-watch-status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .rating-watch-status:empty { display: none; }
+.rating-watch-status button:hover { filter: brightness(1.12); }
+.rating-watch-status button:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .ranking-position {
   display: inline-grid;
   place-items: center;

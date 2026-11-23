@@ -156,7 +156,7 @@ export function commitWatchedOperation(op,{config,configFile,state,tracking,writ
   if(entry.lastWatchedOperation!==op.id){
     const episodes=op.scope==='show'?Array.from({length:op.end},(_,i)=>i+1):[op.episode];
     for(const episode of episodes){entry.episodeStates[episode]=true;entry.deletedEpisodes[episode]={at:op.at,operationId:op.id,scope:op.scope,hashes:op.targets.map(t=>t.hash),...result};}
-    if(op.scope==='show'){entry.watched=Math.max(entry.watched,op.end);entry.completedAt=op.at;entry.showDeletion={at:op.at,operationId:op.id,...result};}
+    if(op.scope==='show'){delete entry.rankWatchUndo;entry.watched=Math.max(entry.watched,op.end);entry.completedAt=op.at;entry.showDeletion={at:op.at,operationId:op.id,...result};}
     entry.lastWatchedOperation=op.id;
   }
   for(const [id,p]of Object.entries(state.pending))if(operationCovers(op,p.item,config))delete state.pending[id];

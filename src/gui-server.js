@@ -87,6 +87,7 @@ import {
 import { createArtwork } from "./artwork.js";
 import { createAnimeRatings } from "./anime-ratings.js";
 import { findRatingWatch, ratingIdentity, ratingWatchEvidence, ratingWatchKey, ratingWatchStatus, ratingWatchWork } from "./rating-watches.js";
+import { rankWatchUndo } from "./rank-watch-undo.js";
 import {
   episodeContext,
   showContext,
@@ -1406,7 +1407,8 @@ export function makeApplication({
         const evidence = readRatingWatchEvidence();
         json(res, 200, { items: body.works.map(input => {
           const work = ratingWatchWork(input);
-          return ratingWatchStatus(tracking[findRatingWatch(tracking, work, evidence)]);
+          const key = findRatingWatch(tracking, work, evidence);
+          return ratingWatchStatus(tracking[key], key);
         }) });
         return;
       }
@@ -1437,10 +1439,11 @@ export function makeApplication({
           const show = shows.find(row => row.key === key) ||
             shows.find(row => row.key === "bgm:" + entry.bgmId);
           markShowWatched(entry, show || entry);
+          entry.rankWatchUndo = rankWatchUndo(prior, entry);
         }
         tracking[key] = entry;
         if (JSON.stringify(entry) !== JSON.stringify(prior)) atomicWrite(trackingFile, tracking);
-        json(res, 200, { key, title: entry.title, ...ratingWatchStatus(entry) });
+        json(res, 200, { title: entry.title, ...ratingWatchStatus(entry, key) });
         return;
       }
       if (route === "GET /api/ratings/ranking") {

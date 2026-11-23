@@ -659,12 +659,13 @@ test('rankings can add a local watched work, preserve its review and recognize o
   const marked = await f.request('ratings/watched', first);
   assert.equal(marked.status, 200);
   assert.equal(marked.data.key, 'bgm:810');
-  assert.deepEqual(await status(alternate,second),[{watched:true,score:null},null]);
+  const watched = { key: marked.data.key, completedAt: marked.data.completedAt, watched: true };
+  assert.deepEqual(await status(alternate,second),[{...watched,score:null},null]);
   const review = (await f.request('progress/review?key=bgm:810')).data;
   const saved = await f.request('progress/review',{key:marked.data.key,version:review.version,draftVersion:review.draftVersion,score:8.5,text:'从排行榜记录',rewatch:false});
   assert.equal(saved.status,200);
   assert.equal((await f.request('ratings/watched', alternate)).data.key,marked.data.key);
-  assert.deepEqual(await status(first,second),[{watched:true,score:8.5},null]);
+  assert.deepEqual(await status(first,second),[{...watched,score:8.5},null]);
   const movieKey = (await f.request('ratings/watched',movie)).data.key;
   assert.notEqual((await f.request('ratings/watched',remake)).data.key,movieKey);
   assert.equal((await f.request('ratings/watched',remake)).data.watched,true);
@@ -677,11 +678,46 @@ test('rankings can add a local watched work, preserve its review and recognize o
   const savedTracking = JSON.parse(fs.readFileSync(path.join(f.dir,'data/tracking.json'),'utf8'));
   const restored = validateBackup(exportBackup(f.c,emptyState(),savedTracking),f.c).backup;
   assert.equal(restored.tracking[marked.data.key].ratingIdentity.ids.anilist,'99');
+  assert.deepEqual(restored.tracking[marked.data.key].rankWatchUndo,savedTracking[marked.data.key].rankWatchUndo);
   await f.request('progress/show/restore',{key:marked.data.key});
   assert.deepEqual(await status(first,second),[null,null]);
   assert.equal((await f.request('progress/review?key=bgm:810')).data.review.score,8.5);
   assert.equal(feedCalls,0);
   assert.equal(downloaderCalls,0);
+});
+
+test('canceling a ranking watch restores the earlier progress and preserves review or later episode edits', async t => {
+  const f = await fixture(t, { qb: { login: async () => assert.fail('no downloader connection') } });
+  const key='bgm:123', file=path.join(f.dir,'data/tracking.json');
+  const at='2026-11-22T00:00:00Z';
+  const prior={title:item.animeTitle,bgmId:'123',watched:1,startEpisode:1,episodeStates:{'2':false},archived:true,
+    personalReview:{score:8,text:'早期评价',rewatch:false,createdAt:at,updatedAt:at}};
+  atomicWrite(file,{[key]:prior});
+  const state=emptyState();
+  state.done[item.id]={...item,episode:'3',status:'added',at,hash:item.infoHash};
+  atomicWrite(statePath(f.c,f.configFile),state);
+  const read=()=>JSON.parse(fs.readFileSync(file,'utf8'))[key];
+  const mark=()=>f.request('ratings/watched',{title:item.animeTitle,names:[],ids:{bangumi:'123'}});
+  const undo=completedAt=>f.request('progress/show/restore',{key,completedAt});
+  let marked=await mark();
+  assert.equal(read().watched,3);
+  assert.deepEqual(read().episodeStates,{'1':true,'2':true,'3':true});
+  assert.equal((await undo(at)).status,409);
+  assert.equal((await undo(marked.data.completedAt)).status,200);
+  const reverted=read();
+  for(const field of ['watched','episodeStates','archived','personalReview'])
+    assert.deepEqual(reverted[field],prior[field]);
+  assert.equal(reverted.completedAt,undefined);
+  assert.equal(reverted.rankWatchUndo,undefined);
+  marked=await mark();
+  const edited=read();
+  edited.watched=2;
+  edited.episodeStates['3']=false;
+  atomicWrite(file,{[key]:edited});
+  assert.equal((await undo(marked.data.completedAt)).status,200);
+  assert.equal(read().watched,2);
+  assert.equal(read().episodeStates['3'],false);
+  assert.deepEqual(read().personalReview,prior.personalReview);
 });
 
 test('old manual work titles are repaired for display without rekeying the viewing record', async () => {
