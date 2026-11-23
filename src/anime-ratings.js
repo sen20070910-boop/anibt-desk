@@ -322,8 +322,8 @@ export function createAnimeRatings(preferences, options = {}) {
       );
       if (index === 0 && !pages.some((rows) => rows.length)) return null;
     }
-    const sample = pages.flat();
-    if (pages.filter((rows) => rows.length >= 10).length < 3) return null;
+    const sample = unique(pages.flat());
+    if (!sample.length) return null;
     return {
       rows: sample,
       candidateIds: sample.map((row) => row.id),
@@ -409,29 +409,50 @@ export function createAnimeRatings(preferences, options = {}) {
     );
   }
 
-  const searchNames = (target) => {
+  const searchNames = (target, source) => {
     const seen = new Set();
-    return target.names
+    const local = (name) => {
+      if (source === "bangumi" && /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(name))
+        return 2;
+      return Number(["bangumi", "douban"].includes(source) && /\p{Script=Han}/u.test(name));
+    };
+    return [...target.names].sort((a, b) => local(b) - local(a))
       .filter((name) => {
-        const key = titleKey(name);
+        const key = name.normalize("NFKC").toLowerCase();
         if (!key || seen.has(key)) return false;
         seen.add(key);
         return true;
       })
       .slice(0, 4);
   };
-  async function byName(target, fetchRows) {
-    const rows = [];
-    for (const name of searchNames(target)) {
-      rows.push(...(await fetchRows(name)));
-      const match = matchAnimeRating(rows, target);
-      if (match) return match;
+  async function tryNames(target, source, match) {
+    let failed, read = false;
+    for (const name of searchNames(target, source)) {
+      try {
+        const found = await match(name);
+        if (found) return found;
+        read = true;
+      } catch (error) {
+        failed = error;
+      }
     }
+    if (!read && failed) throw failed;
     return null;
+  }
+  async function byName(target, fetchRows, source) {
+    const rows = [];
+    return tryNames(target, source, async (name) => {
+      rows.push(...(await fetchRows(name)));
+      return matchAnimeRating(rows, target);
+    });
   }
 
   async function lookup(input, refresh = false) {
     const title = clean(input.title);
+    const names = getNames(title.split(/\s+[/／]\s+/u), input.names || []).slice(0, 12);
+    const sources = input.sources?.length
+      ? RATING_SOURCES.filter((source) => input.sources.includes(source))
+      : RATING_SOURCES;
     const ids = Object.fromEntries(
       RATING_SOURCES.map((source) => [source, numberId(input.ids?.[source])]),
     );
@@ -439,6 +460,8 @@ export function createAnimeRatings(preferences, options = {}) {
     return cached(
       JSON.stringify({
         title,
+        names,
+        sources,
         ids,
         year: yearOf(input.year),
         format: clean(input.format),
@@ -448,11 +471,12 @@ export function createAnimeRatings(preferences, options = {}) {
       async () => {
         const target = {
           title,
-          names: getNames(title.split(/\s+[/／]\s+/u)),
+          names,
           year: yearOf(input.year),
           format: formatKey(input.format),
         };
         const call = async (source, fetchRating) => {
+          if (!sources.includes(source)) return null;
           try {
             const value = await fetchRating();
             return {
@@ -483,14 +507,13 @@ export function createAnimeRatings(preferences, options = {}) {
         async function fetchBangumi(query) {
           if (ids.bangumi)
             return bangumiRow(await readBangumi(network, ids.bangumi));
-          for (const name of searchNames(query)) {
+          return tryNames(query, "bangumi", async (name) => {
             const found = await findBangumi(network, name, (rows) =>
               matchAnimeRating(rows.map(bangumiRow).filter(Boolean), query),
             );
-            if (found)
-              return bangumiRow(await readBangumi(network, found.id)) || found;
-          }
-          return null;
+            if (!found || found.score != null) return found;
+            return bangumiRow(await readBangumi(network, found.id)) || found;
+          });
         }
         async function fetchAniList(query) {
           if (ids.anilist || ids.mal) {
@@ -520,22 +543,22 @@ export function createAnimeRatings(preferences, options = {}) {
           call("anilist", () => fetchAniList(target)),
         ]);
         if (
-          base[0].rating &&
-          base[1].rating &&
+          base[0]?.rating &&
+          base[1]?.rating &&
           !compatible(base[0].rating, base[1].rating)
         )
           base[ids.anilist || ids.mal ? 0 : 1].rating = null;
-        if (base[0].rating && !base[1].rating && !ids.anilist) {
+        if (base[0]?.rating && base[1] && !base[1].rating && !ids.anilist) {
           base[1] = await call("anilist", () =>
             fetchAniList(extend(target, base[0].rating)),
           );
-        } else if (base[1].rating && !base[0].rating && !ids.bangumi) {
+        } else if (base[1]?.rating && base[0] && !base[0].rating && !ids.bangumi) {
           base[0] = await call("bangumi", () =>
             fetchBangumi(extend(target, base[1].rating)),
           );
         }
-        const [bgmResult, aniResult] = base.map((result) => result.rating);
-        for (const row of base)
+        const [bgmResult, aniResult] = base.map((result) => result?.rating);
+        for (const row of base.filter(Boolean))
           if (!row.rating && row.state === "matched") row.state = "unmatched";
         const extended = extend(extend(target, bgmResult), aniResult);
         if (aniResult?.format === "special") extended.format = "special";
@@ -577,7 +600,7 @@ export function createAnimeRatings(preferences, options = {}) {
                       }),
                     )
                     .filter(Boolean);
-                });
+                }, "douban");
             if (!id && !matched) return null;
             const data = await json(
               douban + "/j/subject_abstract?subject_id=" + (id || matched.id),
@@ -601,7 +624,7 @@ export function createAnimeRatings(preferences, options = {}) {
             });
           }),
         ]);
-        return { title, results: [base[0], rest[0], base[1], rest[1]] };
+        return { title, results: [base[0], rest[0], base[1], rest[1]].filter(Boolean) };
       },
     );
   }

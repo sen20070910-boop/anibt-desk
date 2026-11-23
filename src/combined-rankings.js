@@ -198,6 +198,7 @@ export function buildCombinedRanks(samples, key) {
     return {
       ...canonical,
       id: rowKey(canonical),
+      names: [...new Set([canonical.title, ...group.flatMap((row) => row.names)])],
       index: average(values),
       coverage: values.length,
       disagreement: values.length >= 2 && gap >= disagreementThreshold,
@@ -218,10 +219,24 @@ export function buildCombinedRanks(samples, key) {
     .filter((row) => row.coverage < 3)
     .sort((a, b) => b.coverage - a.coverage || ordered(a, b))
     .map((row) => ({ ...row, rank: null }));
+  // Keep the stronger evidence at the top, then fill open places using
+  // independently matched ratings from two sources.
+  const supplemental = limited
+    .filter((row) => row.coverage === 2)
+    .slice(0, Math.max(0, officialLimit - official.length))
+    .map((row, index) => ({
+      ...row,
+      rank: official.length + index + 1,
+      supplemental: true,
+    }));
+  const ranked = [...official.slice(0, officialLimit), ...supplemental];
+  const rankedIds = new Set(supplemental.map((row) => row.id));
   return {
     available,
     official,
-    limited,
+    ranked,
+    supplemental: supplemental.length,
+    limited: limited.filter((row) => !rankedIds.has(row.id)),
     stability: stabilityCheck(official, available),
     referenceCounts: Object.fromEntries(
       [...bySource].map(([source, rows]) => [source, rows.length]),
@@ -281,8 +296,9 @@ export function createCombinedRankings(
         ) ||
           (!previous.partial && summary.partial) ||
           (summary.partial &&
-            Math.min(officialLimit, summary.official.length) <
-              Math.min(officialLimit, previous.official.length)))
+            (summary.ranked.length < previous.ranked.length ||
+              Math.min(officialLimit, summary.official.length) <
+                Math.min(officialLimit, previous.official.length))))
       ) {
         const retained = { ...previous, stale: true, checkedAt: now() };
         if (networkKey() === generation) snapshots.set(category, retained);
@@ -314,7 +330,7 @@ export function createCombinedRankings(
     const snapshot = await read(category, refresh);
     const rows = limited
       ? snapshot.limited
-      : snapshot.official.slice(0, officialLimit);
+      : snapshot.ranked;
     const offset = (page - 1) * pageSize;
     const items = rows.slice(offset, offset + pageSize).map((row) => ({
       ...row,
@@ -340,8 +356,10 @@ export function createCombinedRankings(
       items,
       hasNext: offset + pageSize < rows.length,
       metadata: {
-        ranked: Math.min(officialLimit, snapshot.official.length),
+        ranked: snapshot.ranked.length,
         eligible: snapshot.official.length,
+        supplemental: snapshot.supplemental,
+        target: officialLimit,
         limited: snapshot.limited.length,
         partial: snapshot.partial,
         stale: snapshot.stale,

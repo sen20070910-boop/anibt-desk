@@ -28,6 +28,7 @@
   const ready = new Map();
   const formatter = new Intl.NumberFormat("zh-CN");
   let activeWork,
+    activeCombined,
     lookupRequest = 0;
 
   function score(row) {
@@ -78,6 +79,7 @@
       ? (row.rank ? "本榜前 " + row.topPercent + "% · " : "数据较少 · ") +
         row.coverage +
         "/4 站" +
+        (row.supplemental ? " · 两站补位" : "") +
         (row.disagreement ? " · 站间分歧" : "")
       : votes(row);
     const image = /^\/covers\/[a-f0-9]{32}$/.test(row.cover)
@@ -215,19 +217,18 @@
         " 部 · 更新于 " +
         date +
         "。" +
-        (metadata.eligible > metadata.ranked
-          ? "共 " + metadata.eligible + " 部达到三站门槛。"
-          : "") +
+        "其中 " + Math.min(metadata.eligible, metadata.ranked) + " 部有三站以上评分" +
+        (metadata.supplemental ? "，" + metadata.supplemental + " 部为两站补位。" : "。") +
         "参考样本 " +
         sample +
         "。",
     );
     const { count, checks } = metadata.stability;
-    const comparison = count === metadata.ranked ? Math.min(10, count) : count;
+    const comparison = count === metadata.eligible ? Math.min(10, count) : count;
     text(
       "rankings-stability",
       count
-        ? "逐站去除后，仍留在前 " +
+        ? "仅比较三站以上的作品。逐站去除后，仍留在前 " +
             comparison +
             " 名的作品数 · " +
             checks
@@ -247,18 +248,20 @@
             " 名中最大位移 " +
             Math.max(...checks.map((check) => check.largestShift)) +
             " 位。"
-        : "至少有一部正式上榜后可查看排名稳定性。",
+        : "有三站以上评分的作品上榜后可查看排名稳定性。",
     );
     $("rankings-method").classList.remove("hidden");
     const messages = [];
     if (metadata.stale) messages.push("刷新结果不完整，暂时显示上次榜单。");
     else if (metadata.partial)
       messages.push("部分站点或样本暂不可用，当前榜单按已取得的数据计算。");
+    if (!limited && metadata.ranked > 0 && metadata.ranked < metadata.target)
+      messages.push("当前有 " + metadata.ranked + " 部作品匹配到至少两站评分，目标 " + metadata.target + " 部。");
     if (!itemCount)
       messages.push(
         limited
           ? "暂无数据较少的候选作品。"
-          : "当前没有同时达到三站评分的作品，可以查看数据较少的作品。",
+          : "当前没有同时匹配到两站评分的作品，可以查看数据较少的作品。",
       );
     if (messages.length) {
       status.textContent = messages.join(" ");
@@ -280,7 +283,9 @@
   function renderRatingRow(result) {
     const row = result.rating;
     const state =
-      result.state === "unavailable"
+      result.state === "checking"
+        ? "正在补查原站评分…"
+        : result.state === "unavailable"
         ? "暂时无法读取"
         : result.snapshot
           ? "榜单样本中未匹配"
@@ -300,7 +305,9 @@
               escape(votes(row) || "人数未知") +
               "</small>"
             : "") +
-          (result.snapshot
+          (result.supplement
+            ? '<small class="muted">原站补查 · 未计入本期综合指数</small>'
+            : result.snapshot
             ? '<small class="muted">' +
               escape(
                 "第 " +
@@ -365,6 +372,7 @@
   function open(work) {
     if (!work.title) return;
     activeWork = work;
+    activeCombined = null;
     text("ratings-dialog-title", work.displayTitle || work.title);
     $("ratings-combined-summary").classList.add("hidden");
     $("ratings-retry").classList.remove("hidden");
@@ -374,7 +382,7 @@
   }
   function openCombined(row) {
     activeWork = null;
-    lookupRequest++;
+    activeCombined = row;
     text("ratings-dialog-title", row.title);
     text(
       "ratings-combined-summary",
@@ -383,16 +391,52 @@
         row.coverage +
         "/4 站" +
         (row.rank ? " · 本榜前 " + row.topPercent + "%" : " · 数据较少") +
+        (row.supplemental ? " · 两站补位" : "") +
         (row.disagreement
           ? " · 最高与最低相差 " + formatter.format(row.gap) + " 个百分位点"
           : ""),
     );
     $("ratings-combined-summary").classList.remove("hidden");
-    $("ratings-dialog-results").innerHTML = row.results
-      .map((result) => renderRatingRow({ ...result, snapshot: true }))
-      .join("");
-    $("ratings-retry").classList.add("hidden");
     if (!dialog.open) dialog.showModal();
+    void fillCombinedDetails(row);
+  }
+
+  async function fillCombinedDetails(row, refresh = false) {
+    const request = ++lookupRequest;
+    const params = new URLSearchParams({
+      title: row.title, year: row.year || "", format: row.format || "",
+      refresh: refresh ? "1" : "0",
+    });
+    const missing = new Set();
+    for (const result of row.results) {
+      if (result.rating) params.set(result.source, result.rating.id);
+      else {
+        missing.add(result.source);
+        params.append("source", result.source);
+      }
+    }
+    for (const name of (row.names || []).slice(0, 12)) params.append("name", name);
+    const render = (extra, loading = false) => {
+      $("ratings-dialog-results").innerHTML = row.results.map((result) => {
+        const match = extra.find((entry) => entry.source === result.source);
+        if (match) return renderRatingRow({ ...match, supplement: true });
+        const state = loading && missing.has(result.source) ? "checking" : result.state;
+        return renderRatingRow({ ...result, state, snapshot: true });
+      }).join("");
+    };
+    const retry = $("ratings-retry");
+    retry.classList.toggle("hidden", !missing.size);
+    retry.disabled = Boolean(missing.size);
+    render([], Boolean(missing.size));
+    if (!missing.size) return;
+    try {
+      const data = await api("ratings/lookup?" + params);
+      if (request === lookupRequest && dialog.open) render(data.results);
+    } catch {
+      if (request === lookupRequest && dialog.open) render([]);
+    } finally {
+      if (request === lookupRequest) retry.disabled = false;
+    }
   }
 
   const searchKey = (value) => norm(value).replace(/[^\p{L}\p{N}]/gu, "");
@@ -619,6 +663,7 @@
   );
   $("ratings-retry").addEventListener("click", () => {
     if (activeWork) void loadRatings(activeWork, true);
+    else if (activeCombined) void fillCombinedDetails(activeCombined, true);
   });
   window.AniBTRatings = {
     enter: () => {

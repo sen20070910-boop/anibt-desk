@@ -1413,6 +1413,8 @@ export function makeApplication({
         const result = await animeRatings.lookup(
           {
             title: p.get("title"),
+            names: p.getAll("name").slice(0, 12),
+            sources: p.getAll("source").slice(0, 4),
             year: p.get("year"),
             format: p.get("format"),
             ids: Object.fromEntries(

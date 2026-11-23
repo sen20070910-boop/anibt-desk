@@ -123,6 +123,43 @@ test("four rating providers preserve native scales, real vote counts and a parti
   );
 });
 
+test("missing chart ratings can be looked up by Japanese and Chinese aliases without querying the already matched sites", async () => {
+  const calls = [];
+  const second = {
+    ...bangumi, id: 486347, name: "薬屋のひとりごと 第2期",
+    name_cn: "药屋少女的呢喃 第二季", rating: { score: 7.5, total: 7600 },
+  };
+  const first = {
+    ...second, id: 420628, name: "薬屋のひとりごと",
+    name_cn: "药屋少女的呢喃", date: "2023-10-21",
+  };
+  const service = createAnimeRatings(() => ({}), {
+    network: {
+      async read(url, options) {
+        calls.push(url);
+        assert.match(url, /^https:\/\/api\.bgm\.tv\/v0\/search\/subjects/);
+        if (calls.length === 1) {
+          assert.equal(options.jsonBody.keyword, "薬屋のひとりごと 第二期");
+          throw Error("first alias temporarily unavailable");
+        }
+        assert.equal(options.jsonBody.keyword, second.name);
+        return { text: JSON.stringify({ data: [first, second] }) };
+      },
+    },
+  });
+  const output = await service.lookup({
+    title: "The Apothecary Diaries Season 2",
+    names: ["Kusuriya no Hitorigoto 2nd Season", "薬屋のひとりごと 第二期", second.name_cn, second.name],
+    sources: ["bangumi"],
+    year: 2025,
+    format: "tv",
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(output.results.length, 1);
+  assert.equal(output.results[0].rating?.id, "486347");
+  assert.equal(output.results[0].rating?.score, 7.5);
+});
+
 test("MAL ranking uses rank and rating rather than the number of members", () => {
   const [row] = parseMalRanking(
     '<table><tr class="ranking-list"><td class="rank">26</td><td><h3><a href="https://myanimelist.net/anime/12/Demo">Demo</a></h3><div class="information">TV (12 eps)<br>Oct 2025<br>100 members</div></td><td class="score"><span class="score-label">8.7</span></td></tr></table>',

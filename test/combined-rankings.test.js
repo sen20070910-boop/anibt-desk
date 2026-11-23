@@ -76,6 +76,9 @@ const fixture = () =>
     ],
   ]);
 
+const nonOfficial = (ranked) =>
+  [...ranked.ranked.filter((row) => row.supplemental), ...ranked.limited];
+
 test("combines cross-linked IDs and exact aliases, withholding sparse and conflicting works", () => {
   const ranked = buildCombinedRanks(fixture(), key);
   assert.deepEqual(
@@ -91,14 +94,14 @@ test("combines cross-linked IDs and exact aliases, withholding sparse and confli
   );
   assert.deepEqual(ranked.available, COMBINED_SOURCES);
   assert.deepEqual(
-    ranked.limited
+    nonOfficial(ranked)
       .filter((row) => row.title === "同名重制")
       .map((row) => row.coverage),
     [2, 1],
   );
   const douban = show.results[3].rating;
   assert.equal(douban.adjustedScore, douban.score);
-  const lowVotes = ranked.limited.find((row) => row.title === "小样本")
+  const lowVotes = nonOfficial(ranked).find((row) => row.title === "小样本")
     .results[0].rating;
   assert.ok(lowVotes.adjustedScore < 7 && lowVotes.percentile < 65);
   assert.equal(ranked.stability.checks.length, 4);
@@ -119,7 +122,7 @@ test("a shared ambiguous title without a year does not attach to either known ed
     ["示例动画"],
   );
   assert.deepEqual(
-    ranked.limited
+    nonOfficial(ranked)
       .filter((row) => row.title === "同名重制")
       .map((row) => row.coverage),
     [2, 1, 1],
@@ -196,4 +199,32 @@ test("the formal chart reaches rank 200 on page eight while still comparing the 
   assert.equal(last.items.at(-1).topPercent, 100);
   assert.equal(last.hasNext, false);
   assert.equal((await ranking("tv", 9)).items.length, 0);
+});
+
+test("two-source matches fill the chart up to 200 without displacing stronger matches or ranking one-source titles", async () => {
+  const ranking = createCombinedRankings(async (source) => {
+    const candidates = ["bangumi", "douban"].includes(source)
+      ? Array.from({ length: 225 }, (_, index) =>
+          game(source, String(index + 1000), "双站动画 " + index))
+      : [];
+    return sample(source, [
+      ...candidates,
+      game(source, "998", "多站动画", { score: source === "anilist" ? 55 : 5.5 }),
+      game(source, "999", "单站动画 " + source),
+    ]);
+  }, key);
+  const first = await ranking("tv", 1);
+  const last = await ranking("tv", 8);
+  const limited = await ranking("tv", 1, false, true);
+  assert.equal(first.items[0].title, "多站动画");
+  assert.equal(first.items[0].coverage, 4);
+  assert.ok(first.items[1].index > first.items[0].index);
+  assert.equal(first.items[1].supplemental, true);
+  assert.equal(last.items.at(-1).rank, 200);
+  assert.deepEqual(last.items.at(-1).results.filter((row) => row.rating).map((row) => row.source), ["bangumi", "douban"]);
+  assert.equal(last.metadata.supplemental, 199);
+  assert.equal(last.metadata.eligible, 1);
+  assert.equal(limited.metadata.limited, 30);
+  assert.ok(limited.items.every((row) => row.rank === null));
+  assert.ok(!first.items.some((row) => limited.items.some((other) => other.id === row.id)));
 });
