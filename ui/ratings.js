@@ -30,6 +30,74 @@
   let activeWork,
     activeCombined,
     lookupRequest = 0;
+  const watchRequests = new WeakMap();
+
+  function watchWork(row) {
+    const ids = {};
+    if (row.bgmId) ids.bangumi = row.bgmId;
+    for (const rating of row.results ? row.results.flatMap(result => result.rating ? [result.rating] : []) : [row]) {
+      if (rating.source && rating.id) ids[rating.source] = rating.id;
+      if (rating.malId) ids.mal ||= rating.malId;
+    }
+    if (!Object.keys(ids).length) return null;
+    const names = [...new Set([...(row.names || []), row.originalTitle, ...(row.titleAliases || [])])]
+      .filter(name => name && name !== row.title && name.length <= 100).slice(0, 6);
+    return { title: row.title, names, ids, year: row.year, format: row.format };
+  }
+
+  function watchBadge(status) {
+    return status?.watched
+      ? '<span class="badge success">已看</span>' + (status.score == null ? "" :
+        '<span>我的评分 ' + escape(formatter.format(status.score)) + ' / 10</span>')
+      : "";
+  }
+
+  function watchButton(row, index) {
+    return watchWork(row) ? '<button type="button" class="text-button" data-rating-watch="' +
+      index + '">' + (row.watch?.watched ? "我的评分" : "标为已看并评分") + '</button>' : "";
+  }
+
+  function paintWatch(row, button, status) {
+    row.watch = status;
+    button.textContent = status?.watched ? "我的评分" : "标为已看并评分";
+    button.closest("article").querySelector("[data-rating-watch-status]").innerHTML = watchBadge(status);
+  }
+
+  async function syncWatches(rows, container) {
+    const request = {};
+    watchRequests.set(container, request);
+    const entries = [...container.querySelectorAll("[data-rating-watch]")].flatMap(button => {
+      const row = rows[Number(button.dataset.ratingWatch)];
+      return row && button.isConnected ? [{ row, input: watchWork(row), button }] : [];
+    });
+    for (let offset = 0; offset < entries.length; offset += 20) {
+      if (watchRequests.get(container) !== request) return;
+      const batch = entries.slice(offset, offset + 20);
+      try {
+        const result = await api("ratings/watched/status", { works: batch.map(entry => entry.input) });
+        if (watchRequests.get(container) !== request) return;
+        batch.forEach(({ row, button }, index) => {
+          if (button.isConnected) paintWatch(row, button, result.items[index]);
+        });
+      } catch { return; }
+    }
+  }
+
+  async function openWatch(button, row, container) {
+    const input = row && watchWork(row);
+    if (!input) return;
+    button.disabled = true;
+    watchRequests.delete(container);
+    try {
+      const result = await api("ratings/watched", input);
+      if (button.isConnected) paintWatch(row, button, result);
+      void syncWatches(ranking.items, $("rankings-results"));
+      void syncWatches(search.items, $("ratings-search-results"));
+      await window.AniBTReviews.open({ key: result.key, title: row.title }, { edit: true });
+    } finally {
+      button.disabled = false;
+    }
+  }
 
   function score(row) {
     return row.score == null
@@ -103,6 +171,8 @@
           .filter(Boolean)
           .join(" · "),
       ) +
+      "</span><span class=\"rating-watch-status\" data-rating-watch-status>" +
+      watchBadge(row.watch) +
       "</span></div><h3>" +
       escape(row.title) +
       '</h3><div class="ranking-meta"><strong class="ranking-score">' +
@@ -118,7 +188,7 @@
       icon("search") +
       '找资源</button><button class="text-button" data-ranking-lookup="' +
       index +
-      '">查看评分</button></div></div></article>'
+      '">查看评分</button>' + watchButton(row, index) + '</div></div></article>'
     );
   }
   async function loadRanking(refresh = false) {
@@ -173,6 +243,7 @@
       $("rankings-results").innerHTML = result.items
         .map(renderRankingRow)
         .join("");
+      void syncWatches(ranking.items, $("rankings-results"));
       $("rankings-prev").disabled = page <= 1;
       $("rankings-next").disabled = !result.hasNext;
       const totalPages = result.totalPages || (result.hasNext ? 20 : page);
@@ -473,12 +544,13 @@
     return `<article class="panel ranking-card">
       ${poster(cover)}
       <div class="ranking-body">
-        <div class="ranking-meta">${escape([row.year, type[row.format]].filter(Boolean).join(" · "))}</div>
+        <div class="ranking-meta">${escape([row.year, type[row.format]].filter(Boolean).join(" · "))}<span class="rating-watch-status" data-rating-watch-status>${watchBadge(row.watch)}</span></div>
         <h3>${escape(row.title)}</h3>
         ${original ? `<div class="ranking-meta ratings-search-original">${escape(original)}</div>` : ""}
         <div class="ranking-actions">
           <button class="button secondary" data-rating-search-score="${index}">查看评分</button>
           <button class="text-button" data-rating-search-find="${index}">找资源</button>
+          ${watchButton(row, index)}
         </div>
       </div>
     </article>`;
@@ -491,7 +563,7 @@
     $("rankings-refresh").classList.toggle("hidden", visible);
   }
 
-  async function searchWorks() {
+  async function searchWorks(autoOpen = true) {
     const field = $("ratings-search-query");
     const query = field.value.trim();
     if (!query) {
@@ -520,6 +592,7 @@
       $("ratings-search-results").innerHTML = search.items
         .map(searchCard)
         .join("");
+      void syncWatches(search.items, $("ratings-search-results"));
       $("ratings-search-direct").classList.remove("hidden");
       text(
         "ratings-search-status",
@@ -530,7 +603,7 @@
       const exact = search.items.filter((row) =>
         findNames(row).some((name) => searchKey(name) === searchKey(title)),
       );
-      if (exact.length === 1 && S.page === "rankings") openSearchItem(exact[0]);
+      if (autoOpen && exact.length === 1 && S.page === "rankings") openSearchItem(exact[0]);
     } catch {
       if (request !== search.request) return;
       text(
@@ -556,6 +629,8 @@
   $("ratings-search-results").addEventListener(
     "click",
     guarded(async (event) => {
+      const watch = event.target.closest("[data-rating-watch]");
+      if (watch) return openWatch(watch, search.items[Number(watch.dataset.ratingWatch)], $("ratings-search-results"));
       const scoreButton = event.target.closest("[data-rating-search-score]");
       const findButton = event.target.closest("[data-rating-search-find]");
       if (scoreButton)
@@ -643,6 +718,8 @@
   $("rankings-results").addEventListener(
     "click",
     guarded(async (event) => {
+      const watch = event.target.closest("[data-rating-watch]");
+      if (watch) return openWatch(watch, ranking.items[Number(watch.dataset.ratingWatch)], $("rankings-results"));
       const find = event.target.closest("[data-ranking-find]");
       if (find) {
         const row = ranking.items[Number(find.dataset.rankingFind)];
@@ -665,11 +742,21 @@
     if (activeWork) void loadRatings(activeWork, true);
     else if (activeCombined) void fillCombinedDetails(activeCombined, true);
   });
+  window.addEventListener("anibt-review-saved", () => {
+    if (S.page !== "rankings") return;
+    void syncWatches(ranking.items, $("rankings-results"));
+    void syncWatches(search.items, $("ratings-search-results"));
+  });
   window.AniBTRatings = {
     enter: () => {
       if (!ranking.loaded) void loadRanking();
+      else {
+        void syncWatches(ranking.items, $("rankings-results"));
+        void syncWatches(search.items, $("ratings-search-results"));
+      }
     },
     refresh: () => loadRanking(true),
+    refreshCurrent: () => $("ratings-search-view").classList.contains("hidden") ? loadRanking(true) : searchWorks(false),
     open,
     summary,
   };

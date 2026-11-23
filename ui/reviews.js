@@ -30,8 +30,28 @@
  dialog.addEventListener('cancel',e=>{e.preventDefault();leave('close');});for(const id of ['personal-review-score','personal-review-text','personal-review-rewatch'])$(id).addEventListener('input',changed);
  $('personal-review-save').addEventListener('click',async()=>{
   if(busy||!current||!dirty())return;clearTimeout(draftTimer);busy=true;sync();$('personal-review-error').classList.add('hidden');
-  try{if(draftTask)await draftTask;current=await api('progress/review',{key:current.key,version:current.version,draftVersion:current.draftVersion,...fields()});editing=false;read();toast('个人评价已保存到本机。');try{await window.AniBTWatched?.refresh();}catch{toast('评价已保存，收藏列表暂时未能刷新。',true);}}catch(e){error(e.message);}finally{busy=false;sync();}
+  try{if(draftTask)await draftTask;current=await api('progress/review',{key:current.key,version:current.version,draftVersion:current.draftVersion,...fields()});editing=false;read();toast('个人评价已保存到本机。');window.dispatchEvent(new Event('anibt-review-saved'));if($('watched-library-dialog').open)try{await window.AniBTWatched?.refresh();}catch{toast('评价已保存，收藏列表暂时未能刷新。',true);}}catch(e){error(e.message);}finally{busy=false;sync();}
  });
  window.addEventListener('pagehide',()=>{if(editing&&current&&dirty()&&!draftTask)fetch('/api/progress/review/draft',{method:'POST',headers:{'Content-Type':'application/json','X-App-Token':S.token},body:JSON.stringify({key:current.key,baseVersion:current.version,draftVersion:current.draftVersion,...fields()}),keepalive:true}).catch(()=>{});});
- window.AniBTReviews={open:async show=>{if(busy||dialog.open)return;const n=++sequence;current=null;editing=false;busy=true;text('personal-review-title',(show.displayTitle||show.title)+' · 我的评价');text('personal-review-read','正在读取你的评价…');$('personal-review-draft-banner').classList.add('hidden');$('personal-review-error').classList.add('hidden');sync();dialog.showModal();try{const result=await api('progress/review?'+new URLSearchParams({key:show.key}));if(n!==sequence)return;current=result;read();}catch(e){error(e.message);}finally{busy=false;sync();}}};
+ window.AniBTReviews = { open: async (show, options = {}) => {
+   if (busy || dialog.open) return;
+   const request = ++sequence;
+   current = null;
+   editing = false;
+   busy = true;
+   text('personal-review-title', (show.displayTitle || show.title) + ' · 我的评价');
+   text('personal-review-read', '正在读取你的评价…');
+   $('personal-review-draft-banner').classList.add('hidden');
+   $('personal-review-error').classList.add('hidden');
+   sync();
+   dialog.showModal();
+   try {
+     const result = await api('progress/review?' + new URLSearchParams({key: show.key}));
+     if (request !== sequence) return;
+     current = result;
+     read();
+   } catch (e) { error(e.message); }
+   finally { busy = false; sync(); }
+   if (options.edit && current && !current.draft && dialog.open) edit();
+ } };
 })();

@@ -38,11 +38,17 @@ export function animeCover(raw){const variants=Array.isArray(raw?.coverImageWebp
 export function animeScore(value){return typeof value==='number'&&Number.isFinite(value)&&value>0&&value<=100?value:null;}
 export function animeEpisodes(value){return Number.isInteger(value)&&value>0&&value<=9999?value:null;}
 const coverTitleKey = value => value.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-function matchCover(items, input) {
+function matchCover(items, input, names) {
   if (input.bgmId) return items.find(row => row.bgmId === input.bgmId);
-  const key = coverTitleKey(input.title);
-  const matches = items.filter(row => row.titleAliases.some(alias => coverTitleKey(alias) === key));
-  return key && matches.length === 1 ? matches[0] : undefined;
+  const keys = new Set(names.map(coverTitleKey).filter(Boolean));
+  const primary = coverTitleKey(input.title);
+  const matches = items.map(row => {
+    const aliases = new Set(row.titleAliases.map(coverTitleKey));
+    const count = [...keys].filter(key => aliases.has(key)).length;
+    return {row, count: count + (count && aliases.has(primary) ? keys.size : 0)};
+  }).filter(match => match.count)
+    .sort((a, b) => b.count - a.count);
+  return matches[0]?.count > (matches[1]?.count ?? 0) ? matches[0].row : undefined;
 }
 export function catalogAnime(raw){
   const id=String(raw?._id||raw?.id||'');if(!/^[a-zA-Z0-9_-]{1,128}$/.test(id))return null;
@@ -52,7 +58,50 @@ export function catalogAnime(raw){
 }
 export function createAnimeCatalog(preferences,deps={}){
   const network=deps.network||createSourceNetwork(preferences);const cache=new Map(),coverCache=new Map();
-  return{async covers({items,refresh=false}){if(!Array.isArray(items)||items.length>60||items.some(i=>!i||typeof i.title!=='string'||i.title.length>300||typeof i.bgmId!=='string'||i.bgmId&&!/^\d{1,8}$/.test(i.bgmId)))throw new Error('封面查询条件无效。');const result=[],queue=[...items];const keyOf=i=>i.bgmId?'bgm:'+i.bgmId:'title:'+i.title.normalize('NFKC').trim().toLowerCase();const search=this.search.bind(this);await Promise.all(Array.from({length:Math.min(4,queue.length)},async()=>{while(queue.length){const i=queue.shift(),key=keyOf(i),old=coverCache.get(key);if(!refresh&&old&&Date.now()-old.at<3600000){result.push({key,cover:old.cover,averageScore:old.averageScore,episodes:old.episodes??null,format:old.format,scoreChecked:true});continue;}let cover='',averageScore=null,episodes=null,format='';try{const found=await search({query:i.title.slice(0,100),refresh}),match=matchCover(found.items,i);cover=match?.cover||'';averageScore=match?.averageScore??null;episodes=match?.episodes??null;format=match?.format||'';}catch{}coverCache.set(key,{at:Date.now(),cover,averageScore,episodes,format});if(coverCache.size>600)coverCache.delete(coverCache.keys().next().value);result.push({key,cover,averageScore,episodes,format,scoreChecked:true});}}));return{items:result};},async season({season=currentSeason(),refresh=false}={}){
+  async function covers({ items, refresh = false }) {
+    if (!Array.isArray(items) || items.length > 60 || items.some(item =>
+      !item || typeof item.title !== 'string' || item.title.length > 300 ||
+      typeof item.bgmId !== 'string' || (item.bgmId && !/^\d{1,8}$/.test(item.bgmId)) ||
+      (item.aliases !== undefined && (!Array.isArray(item.aliases) || item.aliases.length > 3 ||
+        item.aliases.some(name => typeof name !== 'string' || !name.trim() || name.length > 100)))))
+      throw new Error('封面查询条件无效。');
+
+    const queue = [...items], result = [];
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        const key = item.bgmId ? 'bgm:' + item.bgmId : 'title:' + item.title.normalize('NFKC').trim().toLowerCase();
+        const names = [...new Set([item.title.slice(0, 100), ...(item.aliases || [])])];
+        const cacheKey = JSON.stringify([network.cacheKey?.(), key, names]);
+        let row = coverCache.get(cacheKey);
+        if (refresh || !row || Date.now() - row.at >= (row.cover ? 3600000 : 60000)) {
+          const candidates = new Map();
+          let match;
+          for (const query of names) {
+            try {
+              const found = await this.search({ query, refresh });
+              for (const candidate of found.items)
+                candidates.set(candidate.bgmId || candidate.id, candidate);
+              match = matchCover([...candidates.values()], item, names);
+              if (match?.cover) break;
+            } catch {}
+          }
+          row = {
+            at: Date.now(), cover: match?.cover || '',
+            averageScore: match?.averageScore ?? null, episodes: match?.episodes ?? null,
+            format: match?.format || '', bgmId: match?.bgmId || '', title: match?.title || '',
+          };
+          coverCache.set(cacheKey, row);
+          if (coverCache.size > 600) coverCache.delete(coverCache.keys().next().value);
+        }
+        const { at, ...metadata } = row;
+        result.push({ key, ...metadata, scoreChecked: true });
+      }
+    }));
+    return { items: result };
+  }
+  return { covers,
+    async season({season=currentSeason(),refresh=false}={}){
     season=normalizeSeason(season);const key='season:'+season;
     if(!refresh&&cache.has(key)&&Date.now()-cache.get(key).at<300000)return cache.get(key).data;
     const response=await network.read('https://anibt.net/api/seasons/anime?'+new URLSearchParams({season}));let payload;

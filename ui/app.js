@@ -392,6 +392,42 @@ async function refreshAll(force = false) {
     $("refresh-button").classList.remove("spin");
   }
 }
+
+let pageRefresh;
+function refreshCurrentPage() {
+  if (pageRefresh) return pageRefresh;
+  const dialogs = document.querySelectorAll("dialog[open]");
+  if (dialogs.length && (dialogs.length > 1 || dialogs[0].id !== "watched-library-dialog"))
+    return;
+  const reload = dialogs.length ? () => window.AniBTWatched.refresh() : ({
+    overview: () => Promise.all([loadStatus(), loadFeed(true), loadQb(true)]),
+    subscriptions: () => loadFeed(true),
+    discover: () => window.AniBTDiscover.refresh(),
+    rankings: () => window.AniBTRatings.refreshCurrent(),
+    library: () => window.AniBTLibrary.refresh(),
+    progress: () => window.AniBTWorkbench.refresh(),
+    downloads: () => Promise.all([loadLogs(), loadQb(true)]),
+    settings: () => loadStatus(),
+  })[S.page];
+  if (!reload) return;
+  const button = $("refresh-button");
+  button.classList.add("spin");
+  pageRefresh = Promise.resolve().then(reload).finally(() => {
+    button.classList.remove("spin");
+    pageRefresh = null;
+  });
+  return pageRefresh;
+}
+
+const refreshShortcut = guarded(refreshCurrentPage);
+document.addEventListener("keydown", event => {
+  if (event.key !== "F5" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  event.preventDefault();
+  if (!event.repeat) void refreshShortcut();
+});
+window.chrome?.webview?.addEventListener("message", event => {
+  if (event.data?.type === "refresh-current-page") void refreshShortcut();
+});
 async function doAction(action, extra = {}) {
   if (S.operation) throw new Error("正在执行操作，请稍候。");
   S.operation = action;

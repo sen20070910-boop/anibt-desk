@@ -5,6 +5,9 @@ const releaseName = title => title.replace(/^[\[【][^\]】]+[\]】]\s*/, '').tr
 
 export function releaseWorkTitle(title) {
   const name = releaseName(title).replace(/\.(?:mkv|mp4|avi|mov|m2ts|ts|webm|torrent)$/i, '').trim();
+  const wrappedNames = /^[\[【]([^\]】]+)[\]】]/u.exec(name)?.[1];
+  if (wrappedNames && /[/／]/u.test(wrappedNames))
+    return wrappedNames.split(/\s*[/／]\s*/u).join(' / ');
   let end = name.length;
   for (const match of name.matchAll(/[\[【(（]([^\]】)）]*)[\]】)）]?/gu)) {
     if (!match.index) continue;
@@ -22,9 +25,23 @@ export function releaseWorkTitle(title) {
   return (dotted ? spaced.slice(0, dotted.index).replaceAll('.', ' ') : spaced) || title;
 }
 
+export function releaseWorkAliases(title) {
+  return releaseWorkTitle(title).split(/\s+[/／]\s+/u)
+    .map((name) => name.trim())
+    .filter((name) => name.length > 1 && name.length <= 100);
+}
+
 export function manualWorkDisplayTitle(title, resources) {
   const legacy = normalizedTitle(title);
   const unfinished = /[\[(]([^\[\]()]+)$/.exec(legacy) || /【([^【】]+)$/.exec(legacy);
+  if (/^[\[【][^\]】]*[/／][^\]】]+[\]】]/u.test(title)) {
+    for (const resource of resources) {
+      if (typeof resource.title !== 'string' ||
+          !normalizedTitle(releaseName(resource.title)).startsWith(legacy)) continue;
+      const names = releaseWorkAliases(resource.title);
+      if (names.length >= 2) return names[0];
+    }
+  }
   if (!unfinished || !technicalTag.test(unfinished[1].trim())) return title;
 
   // Use the release only if it confirms the saved name is a truncated prefix.

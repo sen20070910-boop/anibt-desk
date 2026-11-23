@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Interop;
@@ -71,6 +72,15 @@ namespace AniBTDesktop {
       controls.Children.Add(minimize);controls.Children.Add(maximize);controls.Children.Add(close);minimize.Click+=(s,e)=>SystemCommands.MinimizeWindow(this);maximize.Click+=(s,e)=>{if(WindowState==WindowState.Maximized)SystemCommands.RestoreWindow(this);else SystemCommands.MaximizeWindow(this);};close.Click+=(s,e)=>Close();
       titlebar.Child=bar;outer.Children.Add(titlebar);Grid.SetRow(web,1);outer.Children.Add(web);
       SourceInitialized+=(s,e)=>{int corner=2;DwmSetWindowAttribute(new WindowInteropHelper(this).Handle,33,ref corner,4);ApplyTheme(dark);};
+      PreviewKeyDown+=(s,e)=>{
+        if(e.Key!=Key.F5||Keyboard.Modifiers!=ModifierKeys.None)return;
+        e.Handled=true;
+        if(e.IsRepeat)return;
+        Dispatcher.BeginInvoke(new Action(()=>{
+          if(!closed&&web.CoreWebView2!=null)
+            web.CoreWebView2.PostWebMessageAsJson("{\"type\":\"refresh-current-page\"}");
+        }));
+      };
       StateChanged+=(s,e)=>{if(WindowState!=WindowState.Minimized)restoreMax=WindowState==WindowState.Maximized;maximize.Content=WindowState==WindowState.Maximized?"\uE923":"\uE922";maximize.ToolTip=WindowState==WindowState.Maximized?"还原":"最大化";outer.Margin=WindowState==WindowState.Maximized?new Thickness(7):new Thickness(0);WriteState();UpdateActivity();};
       Loaded+=async(s,e)=>{if(background){WindowState=WindowState.Minimized;RequestAttention();}else{WindowState=restoreMax?WindowState.Maximized:WindowState.Normal;Activate();}Lifecycle("open");try{var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(Program.Root,"data/webview-profile"));await web.EnsureCoreWebView2Async(environment);web.CoreWebView2.Settings.AreDevToolsEnabled=false;web.CoreWebView2.Settings.IsStatusBarEnabled=false;web.CoreWebView2.Settings.AreDefaultContextMenusEnabled=false;web.CoreWebView2.Settings.IsZoomControlEnabled=true;
         web.CoreWebView2.WebMessageReceived+=async(sender,message)=>{try{if(new Uri(message.Source).GetLeftPart(UriPartial.Authority)!=origin)return;var data=Json.Deserialize<Dictionary<string,object>>(message.WebMessageAsJson);if(data.ContainsKey("type")&&Convert.ToString(data["type"])=="folder-open"){string requestId=Convert.ToString(data["id"]);try{bool foreground=await FolderWindow.Open(Convert.ToString(data["path"]));web.CoreWebView2.PostWebMessageAsJson(Json.Serialize(new{type="folder-open-response",id=requestId,foreground=foreground}));}catch(Exception error){web.CoreWebView2.PostWebMessageAsJson(Json.Serialize(new{type="folder-open-response",id=requestId,error=error.Message}));}return;}if(data.ContainsKey("type")&&Convert.ToString(data["type"])=="anibt-account"){string requestId=Convert.ToString(data["id"]);if(Convert.ToString(data["action"])=="capabilities"){web.CoreWebView2.PostWebMessageAsJson(Json.Serialize(new{type="anibt-account-response",id=requestId,result=new{account=true,version="1.8.0"}}));return;}try{if(account==null)account=new AniBTAccount(this,dark,()=>web.CoreWebView2.PostWebMessageAsJson(Json.Serialize(new{type="anibt-login-complete"})));var result=await account.Call(Convert.ToString(data["action"]),data.ContainsKey("data")?(Dictionary<string,object>)data["data"]:new Dictionary<string,object>());web.CoreWebView2.PostWebMessageAsJson(Json.Serialize(new{type="anibt-account-response",id=requestId,result=result}));}catch(Exception error){web.CoreWebView2.PostWebMessageAsJson(Json.Serialize(new{type="anibt-account-response",id=requestId,error=error.Message}));}return;}if(data.ContainsKey("type")&&Convert.ToString(data["type"])=="theme"){morph=data.ContainsKey("design")&&Convert.ToString(data["design"])=="morph";apple=data.ContainsKey("design")&&Convert.ToString(data["design"])=="apple";ApplyTheme(Convert.ToString(data["theme"])=="dark");}if(data.ContainsKey("type")&&Convert.ToString(data["type"])=="unread"){int count=Math.Max(0,Math.Min(999,Convert.ToInt32(data["count"])));unread=count;UpdateOverlay();}}catch{}};

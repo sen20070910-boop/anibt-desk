@@ -25,3 +25,39 @@ test('total episodes hydrate alongside cover and score; invalid counts stay unkn
  for(const [value,expected]of [[12,12],[0,null],[-1,null],[12.5,null],['12',null],[10000,null],[null,null]])assert.equal(catalogAnime({_id:'total',episodes:value}).episodes,expected);
  const catalog=createAnimeCatalog(()=>({}),{network:{read:async()=>({text:JSON.stringify({page:[{_id:'right',bgmId:123,title:{chinese:'测试'},episodes:12}],isDone:true})})}});assert.equal((await catalog.covers({items:[{bgmId:'123',title:'测试'}]})).items[0].episodes,12);
 });
+
+test('manual release aliases retrieve the correct season poster and keep the stored viewing key', async () => {
+ const {buildProgress}=await import('../src/progress.js');
+ const {defaults}=await import('../src/config.js');
+ const name='药师少女的独语';
+ const wrapped='[别当欧尼酱了！/Onii-chan wa Oshimai!/お兄ちゃんはおしまい!][01-12TV全集+特典映像]';
+ const manual={
+  one:{status:'added',origin:'discovery',animeTitle:name,title:'[Team] '+name+' / Kusuriya no Hitorigoto / 薬屋のひとりごと 10-bit 1080p [S1 Fin]'},
+  two:{status:'added',origin:'discovery',animeTitle:wrapped,title:'[DBD-Raws]'+wrapped+'[1080P][BDRip]'},
+ };
+ const shows=buildProgress({state:{done:{}},manual,config:defaults});
+ const inputs=shows.map(show=>({title:show.displayTitle,bgmId:show.bgmId,aliases:show.coverAliases}));
+ assert.equal(inputs.find(row=>row.title===name).aliases[1],'薬屋のひとりごと');
+ assert.equal(inputs.find(row=>row.title==='别当欧尼酱了！').aliases[1],'お兄ちゃんはおしまい!');
+ const catalog=createAnimeCatalog(()=>({}),{network:{async read(address) {
+  const query=new URL(address).searchParams.get('q');
+  const row=(bgmId,chinese,native)=>({_id:String(bgmId),bgmId,title:{chinese,native},cover:'https://r2.anibt.net/'+bgmId+'.jpg'});
+  const page=query===name ? [
+   row(486347,'药屋少女的呢喃 第二季','薬屋のひとりごと 第2期'),
+   row(420628,'药屋少女的呢喃','薬屋のひとりごと'),
+  ] : query==='お兄ちゃんはおしまい!' ? [row(378862,'别当哥哥了！','お兄ちゃんはおしまい！')] : [];
+  return {text:JSON.stringify({page,isDone:true})};
+ }}});
+ const covers=(await catalog.covers({items:inputs})).items;
+ assert.deepEqual(covers.map(row=>row.bgmId).sort(),['378862','420628']);
+ assert.ok(covers.every(row=>row.cover));
+ assert.equal(shows.find(show=>show.displayTitle==='别当欧尼酱了！').title,wrapped);
+ const {findRatingWatch,ratingWatchEvidence,ratingWatchWork}=await import('../src/rating-watches.js');
+ const key='title:'+name;
+ const tracking={[key]:{title:name,completedAt:'2026-11-21T00:00:00Z'}};
+ const evidence=ratingWatchEvidence(manual,defaults);
+ const first=ratingWatchWork({title:'药屋少女的呢喃',names:['薬屋のひとりごと'],ids:{bangumi:'420628'}});
+ const second=ratingWatchWork({title:'药屋少女的呢喃 第二季',names:['薬屋のひとりごと','薬屋のひとりごと 第2期'],ids:{bangumi:'486347'}});
+ assert.equal(findRatingWatch(tracking,first,evidence),key);
+ assert.equal(findRatingWatch(tracking,second,evidence),'');
+});

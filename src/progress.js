@@ -5,9 +5,16 @@ import {applyAnimeBindings} from './anime-bindings.js';
 import { norm,matches } from './feed.js';
 import {animeIdentity} from './anime-identity.js';
 import {episodeRecorded} from './episode-dedupe.js';
-import {manualWorkDisplayTitle} from './release-title.js';
+import {manualWorkDisplayTitle,releaseWorkAliases} from './release-title.js';
 export const animeKey=animeIdentity;
 export const episodeNumber=singleEpisode;
+export function markShowWatched(entry, show, now = new Date().toISOString()) {
+  entry.watched = Math.max(show.watched || 0, show.latest || 0);
+  entry.episodeStates = { ...show.episodeStates };
+  for (let n = 1; n <= show.latest; n++) entry.episodeStates[n] = true;
+  entry.completedAt = show.fullyWatched ? show.completedAt : now;
+  entry.archived = false;
+}
 export function isDirectDiscoveryRecord(job) {
   if (job.origin) return job.origin === 'discovery';
   if (job.bgmId && singleEpisode(job.episode)) return false;
@@ -80,6 +87,13 @@ export function buildProgress({items=[],state,manual={},completed={},torrents=[]
     const resources = directResources.get(show.key) || [];
     const direct = resources.length > 0 && !subscribed.has(show.key);
     const displayTitle = direct ? manualWorkDisplayTitle(show.title, resources) : show.title;
-    return{...show,displayTitle,fullyWatched,episodes,unknown:show.unknown.slice(0,20),missing:direct?[]:missing,direct,resources:resources.slice(0,60),rangeLimited:show.latest>end,watched:show.watched||0,downloaded:episodes.filter(e=>e.status==='已完成').length,unwatched:episodes.filter(e=>!e.watched&&e.status==='已完成').length};
+    const coverAliases = direct && !show.bgmId
+      ? [...new Set(resources.slice(0,3).flatMap(row => {
+          const names = row.title ? releaseWorkAliases(row.title) : [];
+          return names.some(name => norm(name) === norm(displayTitle)) ? names : [];
+        }))].filter(name => norm(name) !== norm(displayTitle)).slice(0,3)
+      : [];
+    const rankingOnly = !!show.ratingIdentity && !subscribed.has(show.key) && !resources.length;
+    return{...show,displayTitle,coverAliases,rankingOnly,fullyWatched,episodes,unknown:show.unknown.slice(0,20),missing:direct?[]:missing,direct,resources:resources.slice(0,60),rangeLimited:show.latest>end,watched:show.watched||0,downloaded:episodes.filter(e=>e.status==='已完成').length,unwatched:episodes.filter(e=>!e.watched&&e.status==='已完成').length};
   }).sort((a,b)=>a.title.localeCompare(b.title,'zh-CN'));
 }

@@ -14,7 +14,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { validateReview } from "../reviews.js";
 import { loadState, statePath } from "../runner.js";
-import { buildProgress } from "../progress.js";
+import { buildProgress, markShowWatched } from "../progress.js";
 import { manualWorkReset } from "../forget-manual-work.js";
 import {
   recheckDeletionWarnings,
@@ -320,12 +320,8 @@ export function createProgressRoutes(ctx) {
         throw new Error("找不到这部作品或这一集，请刷新进度。");
       const priorKey = ctx.trackedKey(tracking, key, config);
       const entry = { ...tracking[priorKey], title: show.title, bgmId: show.bgmId, episodeStates: { ...show.episodeStates } };
-      if (episode === undefined) {
-        entry.watched = Math.max(show.watched, show.latest);
-        for (let n = 1; n <= show.latest; n++) entry.episodeStates[n] = true;
-        entry.completedAt = show.fullyWatched ? show.completedAt : new Date().toISOString();
-        entry.archived = false;
-      } else entry.episodeStates[episode] = true;
+      if (episode === undefined) markShowWatched(entry, show);
+      else entry.episodeStates[episode] = true;
       tracking[key] = entry;
       if (priorKey !== key) delete tracking[priorKey];
       ctx.atomicWrite(ctx.trackingFile, tracking);
@@ -733,7 +729,8 @@ export function createProgressRoutes(ctx) {
       return;
     }
     if (route === "GET /api/progress") {
-      const c = ctx.getConfig(),
+      const refresh = u.searchParams.get("refresh") === "1";
+      const c = ctx.readLocalConfig(),
         state = loadState(
           statePath(c, ctx.configFile),
           c,
@@ -742,7 +739,7 @@ export function createProgressRoutes(ctx) {
       let items = [],
         feedError = "";
       try {
-        items = await ctx.readFeed(false);
+        items = await ctx.readFeed(refresh);
       } catch (e) {
         feedError = e.message;
       }
@@ -758,7 +755,9 @@ export function createProgressRoutes(ctx) {
           value: qb,
           taskHashes,
           taskFolders,
-        } = await ctx.qbSnapshot(verifyFolders),
+        } = await ctx.qbSnapshot(verifyFolders || refresh).catch(() => ({
+          value: { connected: false, torrents: [] }, taskHashes: new Set(), taskFolders: [],
+        })),
         completed = ctx.readJsonFile(
           path.join(path.dirname(ctx.configFile), "data/completions.json"),
           { tasks: {} },

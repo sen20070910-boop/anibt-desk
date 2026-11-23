@@ -330,6 +330,8 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
   gap: 6px 12px;
 }
 .ranking-meta { color: var(--muted); font-size: 11px; }
+.rating-watch-status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.rating-watch-status:empty { display: none; }
 .ranking-position {
   display: inline-grid;
   place-items: center;

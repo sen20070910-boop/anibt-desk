@@ -641,6 +641,49 @@ test('a manually downloaded film uses a work card without episode gap calculatio
   assert.equal(tracked[0].latest,12);
 });
 
+test('rankings can add a local watched work, preserve its review and recognize other sites without connecting the downloader', async t => {
+  let downloaderCalls = 0, feedCalls = 0;
+  const f = await fixture(t, {
+    qb: { login: async () => { downloaderCalls++; throw Error('unexpected qB connection'); } },
+    fetchFeed: async () => { feedCalls++; throw Error('unexpected RSS connection'); },
+  });
+  const first = { title:'示例动画', names:['Example Anime'], ids:{bangumi:'810',mal:'12'}, year:'2023', format:'tv' };
+  const second = { title:'示例动画 第二季', names:['Example Anime 2nd Season','Example Anime'], ids:{bangumi:'811',mal:'13'}, year:'2025', format:'tv' };
+  const alternate = { title:'Example Anime', names:[], ids:{anilist:'99',mal:'12'}, year:'2023', format:'TV' };
+  const movie = { title:'同名电影', names:[], ids:{douban:'444'}, year:'2000', format:'movie' };
+  const remake = { ...movie, ids:{douban:'555'}, year:'2025' };
+  const status = async (...works) => (await f.request('ratings/watched/status',{ works })).data.items;
+  // The ranking workflow also works on a fresh portable profile.
+  atomicWrite(f.configFile, clone(defaults));
+  assert.deepEqual(await status(first,second),[null,null]);
+  const marked = await f.request('ratings/watched', first);
+  assert.equal(marked.status, 200);
+  assert.equal(marked.data.key, 'bgm:810');
+  assert.deepEqual(await status(alternate,second),[{watched:true,score:null},null]);
+  const review = (await f.request('progress/review?key=bgm:810')).data;
+  const saved = await f.request('progress/review',{key:marked.data.key,version:review.version,draftVersion:review.draftVersion,score:8.5,text:'从排行榜记录',rewatch:false});
+  assert.equal(saved.status,200);
+  assert.equal((await f.request('ratings/watched', alternate)).data.key,marked.data.key);
+  assert.deepEqual(await status(first,second),[{watched:true,score:8.5},null]);
+  const movieKey = (await f.request('ratings/watched',movie)).data.key;
+  assert.notEqual((await f.request('ratings/watched',remake)).data.key,movieKey);
+  assert.equal((await f.request('ratings/watched',remake)).data.watched,true);
+  assert.equal((await f.request('ratings/watched',{...first,ids:{mal:'invalid'}})).status,400);
+  const library = await f.request('progress');
+  assert.equal(library.status,200);
+  assert.equal(library.data.shows.filter(show=>show.completedAt).length,3);
+  assert.equal(library.data.shows.find(show=>show.key===marked.data.key).personalReview.score,8.5);
+  const { exportBackup, validateBackup } = await import('../src/migration.js');
+  const savedTracking = JSON.parse(fs.readFileSync(path.join(f.dir,'data/tracking.json'),'utf8'));
+  const restored = validateBackup(exportBackup(f.c,emptyState(),savedTracking),f.c).backup;
+  assert.equal(restored.tracking[marked.data.key].ratingIdentity.ids.anilist,'99');
+  await f.request('progress/show/restore',{key:marked.data.key});
+  assert.deepEqual(await status(first,second),[null,null]);
+  assert.equal((await f.request('progress/review?key=bgm:810')).data.review.score,8.5);
+  assert.equal(feedCalls,0);
+  assert.equal(downloaderCalls,0);
+});
+
 test('old manual work titles are repaired for display without rekeying the viewing record', async () => {
   const { buildProgress } = await import('../src/progress.js');
   const { createDiscovery } = await import('../src/discover.js');

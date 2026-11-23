@@ -86,6 +86,7 @@ import {
 } from "./migration.js";
 import { createArtwork } from "./artwork.js";
 import { createAnimeRatings } from "./anime-ratings.js";
+import { findRatingWatch, ratingIdentity, ratingWatchEvidence, ratingWatchKey, ratingWatchStatus, ratingWatchWork } from "./rating-watches.js";
 import {
   episodeContext,
   showContext,
@@ -98,6 +99,7 @@ import {
   episodeNumber,
   watchedLibraryKeys,
   animeKey,
+  markShowWatched,
 } from "./progress.js";
 import { priorityWait } from "./priority.js";
 import { createAnimeResources } from "./anime-resources.js";
@@ -630,8 +632,9 @@ export function makeApplication({
     }
   }
 
-  const trackedKey = (tracking, key, c = getConfig()) => {
+  const trackedKey = (tracking, key, c) => {
     if (Object.hasOwn(tracking, key)) return key;
+    c ??= getConfig();
     const state = loadState(
       statePath(c, configFile),
       c,
@@ -673,6 +676,15 @@ export function makeApplication({
   };
   const events = [];
   const getConfig = () => loadConfig(configFile);
+  const readLocalConfig = () => {
+    try { return loadConfig(configFile, { validate: false }); }
+    catch { return defaults; }
+  };
+  const readRatingWatchEvidence = () => {
+    let manual = {};
+    try { manual = readManual(); } catch {}
+    return ratingWatchEvidence(manual, readLocalConfig());
+  };
   const revision = () =>
     fs.existsSync(configFile) ? fs.statSync(configFile).mtimeMs : 0;
   const record = (message, kind = "info") => {
@@ -1212,6 +1224,7 @@ export function makeApplication({
       return downloadMutation;
     },
     localStateMutation,
+    readLocalConfig,
     get manualFile() {
       return manualFile;
     },
@@ -1386,6 +1399,50 @@ export function makeApplication({
         }
       }
       const route = req.method + " " + u.pathname;
+      if (route === "POST /api/ratings/watched/status") {
+        if (!Array.isArray(body.works) || body.works.length > 60)
+          throw Error("作品列表无效，请刷新重试。");
+        const tracking = readTracking();
+        const evidence = readRatingWatchEvidence();
+        json(res, 200, { items: body.works.map(input => {
+          const work = ratingWatchWork(input);
+          return ratingWatchStatus(tracking[findRatingWatch(tracking, work, evidence)]);
+        }) });
+        return;
+      }
+      if (route === "POST /api/ratings/watched") {
+        const work = ratingWatchWork(body);
+        requireIdle();
+        requireRecovered();
+        const tracking = readTracking();
+        const key = findRatingWatch(tracking, work, readRatingWatchEvidence()) || ratingWatchKey(work, tracking);
+        const prior = tracking[key];
+        const previousIdentity = ratingIdentity(prior?.ratingIdentity);
+        const identity = {
+          ids: { ...work.ids, ...previousIdentity.ids },
+          year: previousIdentity.year || work.year,
+          format: previousIdentity.format || work.format,
+        };
+        const entry = {
+          watched: 0, startEpisode: 1, archived: false, ...prior,
+          title: prior?.title || work.title,
+          bgmId: prior?.bgmId || identity.ids.bangumi || "",
+          ratingIdentity: identity,
+        };
+        if (!entry.completedAt) {
+          const config = readLocalConfig();
+          const manual = readManual();
+          const state = loadState(statePath(config, configFile), config, Object.values(manual));
+          const shows = buildProgress({ items: feedCache?.items || [], state, manual, tracking, config });
+          const show = shows.find(row => row.key === key) ||
+            shows.find(row => row.key === "bgm:" + entry.bgmId);
+          markShowWatched(entry, show || entry);
+        }
+        tracking[key] = entry;
+        if (JSON.stringify(entry) !== JSON.stringify(prior)) atomicWrite(trackingFile, tracking);
+        json(res, 200, { key, title: entry.title, ...ratingWatchStatus(entry) });
+        return;
+      }
       if (route === "GET /api/ratings/ranking") {
         const result = await animeRatings.ranking(
           u.searchParams.get("source"),
