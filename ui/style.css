@@ -235,6 +235,7 @@ button.stat-card{position:relative;width:100%;font:inherit;text-align:left;color
 
 
 .progress-show-info{display:flex;align-items:center;gap:16px;min-width:0}
+.progress-show-info>div:last-child,.progress-direct-row>div:first-child{min-width:0}
 .progress-show-info h3{overflow-wrap:anywhere}
 .continued-playback {
   display: flex;

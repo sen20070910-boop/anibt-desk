@@ -478,7 +478,7 @@
         "progress/review?" + new URLSearchParams({ key: show.key }),
       );
       rewatch = r;
-      text("rewatch-confirm-title", show.title);
+      text("rewatch-confirm-title", show.displayTitle || show.title);
       text("rewatch-confirm-error", "");
       $("rewatch-confirm-dialog").showModal();
     },

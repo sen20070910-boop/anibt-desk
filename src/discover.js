@@ -10,6 +10,9 @@ import { nyaaSubtitlePage, readNyaaSubtitleDetails } from './nyaa-subtitles.js';
 import { sourceLinks as historyLinks } from './history-actions.js';
 import { singleEpisode, episodeInReleaseTitle } from './episodes.js';
 import { bangumiNames, findBangumi } from './bangumi-catalog.js';
+import { manualWorkDisplayTitle, releaseWorkTitle } from './release-title.js';
+
+export { releaseWorkTitle };
 
 export const sourceNames = {
   anibt: 'AniBT',
@@ -36,25 +39,6 @@ export function inferRelease(title,description='') {
   if(/\[(?:EN|ENG|English)\]|English\s+(?:subs?|subtitles?)|英[文语語]字幕/i.test(text))languages.push('EN');
   const workTitle = releaseWorkTitle(title);
   return{workTitle,groupName:title.match(/^[\[【]([^\]】]+)[\]】]/)?.[1]||'',languages:[...new Set(languages)],resolution:title.match(/\b(2160p|1080p|720p|480p|4K)\b/i)?.[1]?.toLowerCase()||'',subtitles:/内封|內封/.test(text)?['INTERNAL']:/内嵌|內嵌/.test(text)?['EMBEDDED']:/外挂|外掛/.test(text)?['EXTERNAL']:[]};
-}
-const technicalTag = /^(?:\d{1,2}[ -]?bit|(?:2160|1080|720|480)[pi]|(?:1920|1280)[x×](?:1080|720)|4K|BD(?:Rip|Remux)?|Blu[ -]?Ray|UHD|WEB(?:[ -]?(?:DL|Rip))?|DVD(?:Rip)?|HEVC|AVC|AV1|[xh][ .]?26[45]|Dual[ -]?Audio|Multi(?:ple)?[ -]?Subs?|[A-F0-9]{8}|Fin|END|Reseed|CHS|CHT)(?![\p{L}\p{N}])/iu;
-export function releaseWorkTitle(title) {
-  const name = title.replace(/^[\[【][^\]】]+[\]】]\s*/, '').replace(/\.(?:mkv|mp4|avi|mov|m2ts|ts|webm|torrent)$/i, '').trim();
-  let end = name.length;
-  for (const match of name.matchAll(/[\[【(（]([^\]】)）]*)[\]】)）]?/gu)) {
-    if (!match.index) continue;
-    const tag = match[1].trim();
-    if (technicalTag.test(tag) || /^\d{1,3}(?:v\d+)?$/i.test(tag)) {
-      end = match.index;
-      break;
-    }
-  }
-  const spaced = name.slice(0, end).replace(/\s+(?:\d+[ -]?bit|(?:2160|1080|720|480)[pi]|BDRip|BluRay|WebRip|WEB-DL|HEVC|AVC|x26[45])\b.*$/i, '')
-    .replace(/\s+-\s+\d{1,3}(?:v\d+)?\b.*$/i, '').trim();
-  // Some release teams use dots between all words and technical fields.
-  const dotted = /\.(?:19|20)\d{2}(?=\.(?:BluRay|BDRip|WEB|\d{3,4}p)\b)/i.exec(spaced)
-    || /\.(?:BluRay|BDRip|WEB(?:-DL|Rip)?|(?:2160|1080|720|480)p)\b/i.exec(spaced);
-  return (dotted ? spaced.slice(0, dotted.index).replaceAll('.', ' ') : spaced) || title;
 }
 function validPage(url,base){if(typeof url!=='string'||!url.trim())return '';try{return sourceUrl(url,base);}catch{return '';}}
 function sizeBytes(text){const m=String(text).match(/([\d.]+)\s*([KMGT]?i?B)/i);if(!m)return 0;const power={B:0,K:1,M:2,G:3,T:4}[m[2][0].toUpperCase()]||0;return Number(m[1])*(/i/i.test(m[2])?1024:1000)**power;}
@@ -726,8 +710,9 @@ export function createDiscovery(getPreferences,{network=createSourceNetwork(getP
     const download = pageUrl && publicTorrent(pageUrl);
     const title = row.title || row.animeTitle;
     const metadata = inferRelease(title);
+    const workTitle = row.animeTitle ? manualWorkDisplayTitle(row.animeTitle, [row]) : metadata.workTitle;
     return remember({
-      ...metadata, title, workTitle: row.animeTitle || metadata.workTitle, kind: 'release', infoHash,
+      ...metadata, title, workTitle, kind: 'release', infoHash,
       animeTitle: row.animeTitle, bgmId: row.bgmId, episode: row.episode, version: row.version,
       pageUrl, torrentUrl: download?.torrentUrl || '',
       magnet: magnetFor(infoHash, download?.tracker),

@@ -5,6 +5,7 @@ import {applyAnimeBindings} from './anime-bindings.js';
 import { norm,matches } from './feed.js';
 import {animeIdentity} from './anime-identity.js';
 import {episodeRecorded} from './episode-dedupe.js';
+import {manualWorkDisplayTitle} from './release-title.js';
 export const animeKey=animeIdentity;
 export const episodeNumber=singleEpisode;
 export function isDirectDiscoveryRecord(job) {
@@ -78,6 +79,7 @@ export function buildProgress({items=[],state,manual={},completed={},torrents=[]
     const fullyWatched=!!show.completedAt&&episodes.every(e=>e.watched);
     const resources = directResources.get(show.key) || [];
     const direct = resources.length > 0 && !subscribed.has(show.key);
-    return{...show,fullyWatched,episodes,unknown:show.unknown.slice(0,20),missing:direct?[]:missing,direct,resources:resources.slice(0,60),rangeLimited:show.latest>end,watched:show.watched||0,downloaded:episodes.filter(e=>e.status==='已完成').length,unwatched:episodes.filter(e=>!e.watched&&e.status==='已完成').length};
+    const displayTitle = direct ? manualWorkDisplayTitle(show.title, resources) : show.title;
+    return{...show,displayTitle,fullyWatched,episodes,unknown:show.unknown.slice(0,20),missing:direct?[]:missing,direct,resources:resources.slice(0,60),rangeLimited:show.latest>end,watched:show.watched||0,downloaded:episodes.filter(e=>e.status==='已完成').length,unwatched:episodes.filter(e=>!e.watched&&e.status==='已完成').length};
   }).sort((a,b)=>a.title.localeCompare(b.title,'zh-CN'));
 }

@@ -9,16 +9,19 @@
  $('rule-inherit-priority').addEventListener('change',selectPriority);
  new MutationObserver(selectPriority).observe($('rule-dialog'),{attributes:true,attributeFilter:['open']});
  const progressMetadata=new Map();
- const coverKey=show=>show.bgmId?'bgm:'+show.bgmId:'title:'+norm(show.title);
+ const displayTitle = show => show.displayTitle || show.title;
+ const coverKey=show=>show.bgmId?'bgm:'+show.bgmId:'title:'+norm(displayTitle(show));
  function showCover(show,meta){
-   return meta?.cover?`<img data-cover-url="${escape(meta.cover)}" data-cover-title="${escape(show.title)}" data-cover-bgm="${escape(show.bgmId||'')}" alt="" loading="lazy">`:'<span>'+escape(show.title.slice(0,12))+'</span>';
+   return meta?.cover
+     ? `<img data-cover-url="${escape(meta.cover)}" data-cover-title="${escape(displayTitle(show))}" data-cover-bgm="${escape(show.bgmId||'')}" alt="" loading="lazy">`
+     : icon('library');
  }
  async function loadShowMetadata(shows,cache,onUpdate){
    const queue=shows.filter(show=>!cache.has(show.key));
    for(let i=0;i<queue.length;i+=30){
      const subset=queue.slice(i,i+30);
      try{
-       const result=await api('anibt/covers',{items:subset.map(show=>({title:show.title,bgmId:show.bgmId||''}))});
+       const result=await api('anibt/covers',{items:subset.map(show=>({title:displayTitle(show),bgmId:show.bgmId||''}))});
        const byKey=new Map(result.items.map(meta=>[meta.key,meta]));
        for(const show of subset){const meta=byKey.get(coverKey(show));if(meta?.cover)cache.set(show.key,meta);}
        onUpdate();
@@ -38,7 +41,7 @@
    if (!show?.direct || resetting) return;
    const request = ++resetRequest;
    resetPlan = null;
-   text("manual-reset-name", show.title);
+   text("manual-reset-name", displayTitle(show));
    text("manual-reset-scope", "正在核对这部作品的记录…");
    $("manual-reset-error").classList.add("hidden");
    $("manual-reset-confirm").disabled = true;
@@ -47,7 +50,7 @@
      const preview = await api("progress/manual/reset/preview", { key: show.key });
      if (request !== resetRequest || !resetDialog.open) return;
      resetPlan = { key: show.key, version: preview.version };
-     text("manual-reset-name", preview.title);
+     text("manual-reset-name", show.displayTitle || preview.title);
      text("manual-reset-scope", `将清除这部作品的 ${preview.records} 条手动下载记录，以及本机观看进度、评分、评价和草稿。相关去重与完成通知也会清除。操作仅限工具内记录，删除后无法撤销。`);
      $("manual-reset-confirm").disabled = false;
    } catch (error) {
@@ -91,7 +94,7 @@
      <div class="progress-show-heading progress-direct-heading">
        <div class="progress-show-info">
          <div class="progress-cover watched-library-cover" data-progress-cover>${showCover(show, progressMetadata.get(show.key))}</div>
-         <div><h3>${escape(show.title)}</h3><p class="muted">手动下载 · ${show.resources.length} 份资源</p></div>
+         <div><h3>${escape(displayTitle(show))}</h3><p class="muted">手动下载 · ${show.resources.length} 份资源</p></div>
        </div>
        ${show.direct ? `<div class="progress-direct-actions">
          <button type="button" class="text-button" data-progress-archive="${i}">${show.archived ? '取消归档' : '归档作品'}</button>
@@ -167,13 +170,13 @@
 
  let watchedShows=[],watchedMetadata=new Map();
  function renderWatched(){
-  const query=norm($('watched-library-search').value),filter=$('watched-library-filter').value,sort=$('watched-library-sort').value;const visible=watchedShows.filter(s=>(!query||norm(s.title+' '+(s.personalReview?.text||'')+' '+(s.watchSessions||[]).map(w=>w.personalReview?.text||'').join(' ')).includes(query))&&(filter==='all'||filter==='unreviewed'&&(!s.personalReview||s.personalReview.score===null&&!s.personalReview.text.trim())||filter==='rewatch'&&s.personalReview?.rewatch===true||filter==='scored'&&s.personalReview?.score!==null&&s.personalReview?.score!==undefined));visible.sort((a,b)=>sort==='score'?(b.personalReview?.score??-1)-(a.personalReview?.score??-1):sort==='website'?(watchedMetadata.get(b.key)?.averageScore??-1)-(watchedMetadata.get(a.key)?.averageScore??-1):sort==='title'?a.title.localeCompare(b.title,'zh-CN'):sort==='first'?String(a.watchSessions?.[0]?.completedAt||a.completedAt).localeCompare(String(b.watchSessions?.[0]?.completedAt||b.completedAt)):String(b.completedAt).localeCompare(String(a.completedAt)));text('watched-library-count','显示 '+visible.length+' / '+watchedShows.length+' 部');
-  $('watched-library-results').innerHTML=visible.length?visible.map(show=>{const i=watchedShows.indexOf(show);const meta=watchedMetadata.get(show.key)||{},warning=show.showDeletion?.filesRemaining||show.showDeletion?.unknownFiles||show.showDeletion?.folderErrors;return `<article class="watched-library-card"><div class="watched-library-cover">${meta.cover?`<img data-cover-url="${escape(meta.cover)}" data-cover-title="${escape(show.title)}" data-cover-bgm="${escape(show.bgmId||'')}" alt="" loading="lazy">`:`<span>${escape(show.title.slice(0,12))}</span>`}</div><div><h3><button type="button" class="watched-review-title" data-watched-review="${i}">${escape(show.title)}</button></h3><p class="muted">第 ${(show.watchSessions?.length||0)+1} 次看完 · ${date(show.completedAt)}</p><p>${meta.format==='MOVIE'?'电影':show.direct?'手动下载 · '+show.resources.length+' 份资源':meta.episodes?'共 '+meta.episodes+' 集':'最新已知第 '+(show.latest||'?')+' 集'} · ${typeof meta.averageScore==='number'?'网站评分 '+meta.averageScore+' / 100':'暂无评分'}</p><span class="badge ${show.fullyWatched?'success':''}">${show.fullyWatched?'已全部看完':'有新集数待看'}</span>${warning?'<p class="muted">部分文件或目录仍待手动核对</p>':''}<div class="personal-review-summary"><strong>${show.personalReview?.score!==null&&show.personalReview?.score!==undefined?'我的评分：'+show.personalReview.score+' / 10':'我的评分：暂未评分'}</strong><p>${escape(show.personalReview?.text?.slice(0,80)||'还没有写下观后评价')}</p></div><div class="watched-library-tools"><button type="button" class="text-button" data-watched-review="${i}">我的评价</button><button type="button" class="text-button" data-watched-resources="${i}">查看资源</button><button type="button" class="text-button" data-watched-rewatch="${i}">开始重看</button><button type="button" class="text-button" data-watched-restore="${i}">${show.direct?'移回进度':'移回在追'}</button>${show.direct?`<button type="button" class="text-button" data-watched-manual-reset="${i}">删除记录</button>`:''}</div></div></article>`;}).join(''):empty(watchedShows.length?'当前条件没有匹配的番剧':'还没有收录看完的番剧',watchedShows.length?'可以清空搜索或切换筛选条件。':'在追番进度中点击“已全部看完”，二次确认后会收录到这里。','library');
+  const query=norm($('watched-library-search').value),filter=$('watched-library-filter').value,sort=$('watched-library-sort').value;const visible=watchedShows.filter(s=>(!query||norm(displayTitle(s)+' '+(s.personalReview?.text||'')+' '+(s.watchSessions||[]).map(w=>w.personalReview?.text||'').join(' ')).includes(query))&&(filter==='all'||filter==='unreviewed'&&(!s.personalReview||s.personalReview.score===null&&!s.personalReview.text.trim())||filter==='rewatch'&&s.personalReview?.rewatch===true||filter==='scored'&&s.personalReview?.score!==null&&s.personalReview?.score!==undefined));visible.sort((a,b)=>sort==='score'?(b.personalReview?.score??-1)-(a.personalReview?.score??-1):sort==='website'?(watchedMetadata.get(b.key)?.averageScore??-1)-(watchedMetadata.get(a.key)?.averageScore??-1):sort==='title'?displayTitle(a).localeCompare(displayTitle(b),'zh-CN'):sort==='first'?String(a.watchSessions?.[0]?.completedAt||a.completedAt).localeCompare(String(b.watchSessions?.[0]?.completedAt||b.completedAt)):String(b.completedAt).localeCompare(String(a.completedAt)));text('watched-library-count','显示 '+visible.length+' / '+watchedShows.length+' 部');
+  $('watched-library-results').innerHTML=visible.length?visible.map(show=>{const i=watchedShows.indexOf(show);const meta=watchedMetadata.get(show.key)||{},warning=show.showDeletion?.filesRemaining||show.showDeletion?.unknownFiles||show.showDeletion?.folderErrors;return `<article class="watched-library-card"><div class="watched-library-cover">${showCover(show,meta)}</div><div><h3><button type="button" class="watched-review-title" data-watched-review="${i}">${escape(displayTitle(show))}</button></h3><p class="muted">第 ${(show.watchSessions?.length||0)+1} 次看完 · ${date(show.completedAt)}</p><p>${meta.format==='MOVIE'?'电影':show.direct?'手动下载 · '+show.resources.length+' 份资源':meta.episodes?'共 '+meta.episodes+' 集':'最新已知第 '+(show.latest||'?')+' 集'} · ${typeof meta.averageScore==='number'?'网站评分 '+meta.averageScore+' / 100':'暂无评分'}</p><span class="badge ${show.fullyWatched?'success':''}">${show.fullyWatched?'已全部看完':'有新集数待看'}</span>${warning?'<p class="muted">部分文件或目录仍待手动核对</p>':''}<div class="personal-review-summary"><strong>${show.personalReview?.score!==null&&show.personalReview?.score!==undefined?'我的评分：'+show.personalReview.score+' / 10':'我的评分：暂未评分'}</strong><p>${escape(show.personalReview?.text?.slice(0,80)||'还没有写下观后评价')}</p></div><div class="watched-library-tools"><button type="button" class="text-button" data-watched-review="${i}">我的评价</button><button type="button" class="text-button" data-watched-resources="${i}">查看资源</button><button type="button" class="text-button" data-watched-rewatch="${i}">开始重看</button><button type="button" class="text-button" data-watched-restore="${i}">${show.direct?'移回进度':'移回在追'}</button>${show.direct?`<button type="button" class="text-button" data-watched-manual-reset="${i}">删除记录</button>`:''}</div></div></article>`;}).join(''):empty(watchedShows.length?'当前条件没有匹配的番剧':'还没有收录看完的番剧',watchedShows.length?'可以清空搜索或切换筛选条件。':'在追番进度中点击“已全部看完”，二次确认后会收录到这里。','library');
  }
  async function loadWatched(){const result=await api('progress');watchedShows=result.shows.filter(s=>s.completedAt).sort((a,b)=>String(b.completedAt).localeCompare(String(a.completedAt)));renderWatched();await loadShowMetadata(watchedShows,watchedMetadata,()=>{if($('watched-library-dialog').open)renderWatched();});}
  for(const id of ['watched-library-search','watched-library-filter','watched-library-sort'])$(id).addEventListener(id==='watched-library-search'?'input':'change',renderWatched);
  $('open-watched-library').addEventListener('click',guarded(async()=>{$('watched-library-dialog').showModal();$('watched-library-results').textContent='正在读取看过的番剧…';try{await loadWatched();}catch(e){$('watched-library-results').textContent=e.message;}}));
- $('watched-library-results').addEventListener('click',guarded(async e=>{const reset=e.target.closest('[data-watched-manual-reset]');if(reset)return openManualReset(watchedShows[Number(reset.dataset.watchedManualReset)]);const rewatch=e.target.closest('[data-watched-rewatch]');if(rewatch)return window.AniBTLibraryTools.rewatch(watchedShows[Number(rewatch.dataset.watchedRewatch)]);const review=e.target.closest('[data-watched-review]');if(review)return window.AniBTReviews.open(watchedShows[Number(review.dataset.watchedReview)]);const restore=e.target.closest('[data-watched-restore]'),resources=e.target.closest('[data-watched-resources]');if(resources){const show=watchedShows[Number(resources.dataset.watchedResources)];$('watched-library-dialog').close();if(show.direct)return window.AniBTDiscover.find(show.title.slice(0,100));return window.AniBTResources.open({...show,...watchedMetadata.get(show.key)});}if(restore){const show=watchedShows[Number(restore.dataset.watchedRestore)];restore.disabled=true;try{await api('progress/show/restore',{key:show.key});if(show.direct){$('watched-library-dialog').close();$('progress-origin').value='direct';$('progress-view').value='active';changePage('progress');toast('已移回进度，可在资源旁点击「再次下载」。');}else{await loadWatched();await loadFeed();toast('已移回在追，观看进度和已删除文件状态保留；不会自动补下载。');}}finally{restore.disabled=false;}}}));
+ $('watched-library-results').addEventListener('click',guarded(async e=>{const reset=e.target.closest('[data-watched-manual-reset]');if(reset)return openManualReset(watchedShows[Number(reset.dataset.watchedManualReset)]);const rewatch=e.target.closest('[data-watched-rewatch]');if(rewatch)return window.AniBTLibraryTools.rewatch(watchedShows[Number(rewatch.dataset.watchedRewatch)]);const review=e.target.closest('[data-watched-review]');if(review)return window.AniBTReviews.open(watchedShows[Number(review.dataset.watchedReview)]);const restore=e.target.closest('[data-watched-restore]'),resources=e.target.closest('[data-watched-resources]');if(resources){const show=watchedShows[Number(resources.dataset.watchedResources)];$('watched-library-dialog').close();if(show.direct)return window.AniBTDiscover.find(displayTitle(show).slice(0,100));return window.AniBTResources.open({...show,...watchedMetadata.get(show.key)});}if(restore){const show=watchedShows[Number(restore.dataset.watchedRestore)];restore.disabled=true;try{await api('progress/show/restore',{key:show.key});if(show.direct){$('watched-library-dialog').close();$('progress-origin').value='direct';$('progress-view').value='active';changePage('progress');toast('已移回进度，可在资源旁点击「再次下载」。');}else{await loadWatched();await loadFeed();toast('已移回在追，观看进度和已删除文件状态保留；不会自动补下载。');}}finally{restore.disabled=false;}}}));
 
  if(S.openWatched){S.openWatched=false;queueMicrotask(()=>$('open-watched-library').click());}
  window.AniBTWatched={refresh:loadWatched};

@@ -641,6 +641,37 @@ test('a manually downloaded film uses a work card without episode gap calculatio
   assert.equal(tracked[0].latest,12);
 });
 
+test('old manual work titles are repaired for display without rekeying the viewing record', async () => {
+  const { buildProgress } = await import('../src/progress.js');
+  const { createDiscovery } = await import('../src/discover.js');
+  const discovery = createDiscovery(() => ({}));
+  const rows = [
+    ['One Piece Fan Letter (BD', '[HatSubs] One Piece Fan Letter (BD 1080p 10-bit Opus) [3D18E382].mkv', 'One Piece Fan Letter'],
+    ['Tokyo Godfathers (Dual Audio) [BDRip', '[CBM] Tokyo Godfathers (Dual Audio) [BDRip 1080p x265 10bit]', 'Tokyo Godfathers'],
+    ['收藏译名', '[CBM] Tokyo Godfathers (Dual Audio) [BDRip 1080p x265 10bit]', '收藏译名'],
+    ['Film (WEB', '[Team] Other Film (WEB 1080p)', 'Film (WEB'],
+  ];
+  try {
+    for (const [animeTitle, title, expected] of rows) {
+      const hash = 'e'.repeat(40), key = 'title:' + animeTitle.toLowerCase();
+      const record = { origin: 'discovery', status: 'added', animeTitle, title, hash };
+      const at = '2026-11-22T00:00:00Z';
+      const tracking = { [key]: { title: animeTitle, completedAt: at, watched: 1 } };
+      const [show] = buildProgress({ state: emptyState(), manual: { [hash]: record }, tracking, config: clone(defaults) });
+      assert.equal(show.displayTitle, expected);
+      assert.equal(show.key, key);
+      assert.equal(show.title, animeTitle);
+      assert.equal(show.completedAt, at);
+      assert.equal(show.resources[0].title, title);
+      const reopened = discovery.reopen(record);
+      assert.equal(reopened.workTitle, expected);
+      assert.equal(discovery.peek(reopened.resultId).animeTitle, animeTitle);
+    }
+  } finally {
+    await discovery.close();
+  }
+});
+
 test('marking an AniBT series watched excludes unassociated manual editions of the same work', async () => {
   const { showContext } = await import('../src/episode-actions.js');
   const hash='f'.repeat(40);
